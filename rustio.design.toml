@@ -1,0 +1,49 @@
+# ════════════════════════════════════════════════════════════════════
+#  rustio.design.toml — the single source of truth for your admin's look.
+#
+#  THE ONE RULE: edit THIS file only. Never touch anything under
+#  generated/. After editing, run:        rustio-design build
+#  Verify any time (CI-friendly, read-only): rustio-design check
+# ════════════════════════════════════════════════════════════════════
+
+[project]
+name = "My Admin"
+# Where generated artifacts go (served via RUSTIO_TOKENS_CSS):
+out_dir = "generated"
+# Point this at your rustio-admin checkout to unlock the WCAG-safe brand
+# ramp ([brand].derive). The token overrides below work with or without it.
+# rustio_admin_path = "../rustio-admin"
+
+[brand]
+# Your primary brand color. With derive = true (and rustio_admin_path set),
+# rustio-admin's rio-theme engine computes a contrast-safe ramp for you.
+color = "#2563eb"
+# derive = true
+
+# ── Token overrides ──────────────────────────────────────────────────
+# Keys are validated against rustio-admin's real --rio-* vocabulary, so a
+# typo is rejected (with a "did you mean") before anything is written —
+# an override can never silently do nothing.
+
+[colors]
+# text-strong = "#0f172a"
+# danger      = "#dc2626"
+
+[radius]
+default = "8px"
+sm      = "5px"
+lg      = "12px"
+
+[spacing]
+# sidebar-w   = "264px"
+# content-max = "1440px"
+
+[typography]
+# font-sans = "'Inter', system-ui, -apple-system, sans-serif"
+
+[custom_css]
+# Escape hatch for the rare rule with no token. Validated: no @import, no
+# remote url(), no markup. Prefer tokens above whenever possible.
+# rules = """
+# .rio-sidebar { letter-spacing: 0.01em; }
+# """

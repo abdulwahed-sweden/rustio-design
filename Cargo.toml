@@ -1,0 +1,23 @@
+[package]
+name = "rustio-design"
+version = "0.1.0"
+edition = "2021"
+description = "The Claude-friendly design bridge for rustio-admin: one declarative spec, compiled to safe tokens.css with a doctrine validator and drift detection. Edit one file; never hand-touch the generated CSS."
+license = "MIT"
+repository = "https://github.com/abdulwahed-sweden/rustio-design"
+keywords = ["rustio-admin", "design-tokens", "css", "claude", "codegen"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "rustio-design"
+path = "src/main.rs"
+
+# Intentionally ZERO external dependencies — pure std.
+# This mirrors rustio-admin's own ethos ("minimal deps, hand-rolled, no magic")
+# and guarantees the bridge builds offline, forever.
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

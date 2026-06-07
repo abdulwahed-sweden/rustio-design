@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+.DS_Store
+
+# Generated output is intentionally committed: `rustio-design check` diffs it
+# against the manifest in CI to catch drift and staleness. Do NOT ignore it.
+# (Only transient artifacts are ignored.)
+*.tmp

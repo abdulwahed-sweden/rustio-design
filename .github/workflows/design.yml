@@ -1,0 +1,23 @@
+name: design
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: test
+        run: cargo test --all-targets
+      # The design gate: the spec must be valid, and the committed generated/
+      # output must be in sync (no drift, no staleness). This is what keeps
+      # hand-edits to generated CSS out of the tree.
+      - name: design check
+        run: cargo run -- check
