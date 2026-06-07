@@ -14,6 +14,48 @@ seam — **without** recompiling the framework or hand-editing its lock-step CSS
 It is a pure-`std` Rust CLI with **zero external dependencies** (intentionally —
 mirroring rustio-admin's "minimal deps, hand-rolled, no magic" ethos).
 
+## The design stack (this bridge is design *memory*, not a token compiler)
+
+The token spec is the bottom of a stack. Above it sit the layers a designer — or
+Claude Design — actually reasons about first. The whole point is to **preserve
+design intent, rationale, and evolution over time**, so a future developer
+understands not only what the design is, but *why it became that way*.
+
+```
+WHY        design/DESIGN_BRIEF.md         business context · design intent · visual direction
+Reasoning  design/DESIGN_REASONING.md     the ADR trail — justify BEFORE the spec
+WHAT       design/DESIGN_ARCHITECTURE.md  information architecture · navigation · UX hierarchy
+Memory     design/DESIGN_DECISIONS.md     the durable ledger of accepted decisions
+Memory     design/DESIGN_HISTORY.md       how (and why) the design evolved
+HOW        rustio.design.toml             the validated token spec
+Output     generated/                     machine-owned; never hand-edited
+```
+
+`rustio-design context` assembles all of this into one canonical stream. The
+`[design]` section of the spec is the manifest pointing at these files.
+
+**Reason TOP-DOWN (WHY → WHAT → HOW); generate BOTTOM-UP.** Today only the HOW
+layer compiles to output — the higher layers are *active design memory*, not yet
+generated from. Humans, Claude Design, and Claude Code share them as one
+narrative source of truth.
+
+## The reasoning contract (Plan → Review → Approve → Apply)
+
+The pipeline is **Brief → Reasoning → Architecture → Spec → Generated** — never
+Brief → Spec. Before you change a single token:
+
+1. **Plan** — read `rustio-design context`; append an ADR-style entry to the top
+   of `DESIGN_REASONING.md` (context, ≥2 options with trade-offs, decision,
+   rationale, *why alternatives were rejected*, spec/architecture impact;
+   status `proposed`).
+2. **Review** — show the entry + the proposed token diff; wait for approval.
+3. **Approve** — set status `accepted`; add a row to `DESIGN_DECISIONS.md` and a
+   line to `DESIGN_HISTORY.md`.
+4. **Apply** — only now edit `rustio.design.toml`, then `build` + `check`.
+
+`/design-reason` drives this; `/design-context` loads the stack. The reasoning
+trail must exist from day one — even a trivial change gets a one-line entry.
+
 ## The single most important rule
 
 > **Edit `rustio.design.toml`. Then run `rustio-design build`.**
@@ -28,10 +70,11 @@ CSS, and do not edit generated files.
 ## Workflow
 
 ```sh
-cargo run -- init       # scaffold rustio.design.toml (once)
-# edit rustio.design.toml
+cargo run -- init       # scaffold spec + design-memory artifacts (once)
+cargo run -- context    # assemble WHY→WHAT→HOW into one stream (read before changing)
+# reason in design/DESIGN_REASONING.md, then edit rustio.design.toml
 cargo run -- build      # validate against doctrine + generate
-cargo run -- check      # read-only: valid? in sync? no drift? (CI gate)
+cargo run -- check      # read-only: valid? in sync? no drift? memory present? (CI gate)
 cargo run -- wire       # print the RUSTIO_TOKENS_CSS export
 ```
 

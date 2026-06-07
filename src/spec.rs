@@ -10,6 +10,21 @@ pub struct Spec {
     doc: Document,
 }
 
+/// Resolved paths to the narrative design-memory artifacts (relative to the
+/// directory that holds the spec). Defaults match what `init` scaffolds.
+pub struct DesignPaths {
+    /// WHY — business context, design intent, visual direction.
+    pub brief: String,
+    /// The ADR-style reasoning trail authored before any spec change.
+    pub reasoning: String,
+    /// WHAT — information architecture, navigation, UX hierarchy.
+    pub architecture: String,
+    /// The durable ledger of accepted decisions.
+    pub decisions: String,
+    /// The human-readable evolution of the design.
+    pub history: String,
+}
+
 /// One token override pulled from the spec, before resolution.
 pub struct RawToken {
     /// The originating section (`colors` / `spacing` / `radius` / `typography`).
@@ -81,6 +96,21 @@ impl Spec {
         out
     }
 
+    /// Paths to the higher design-memory layers, from the `[design]` section
+    /// (with conventional defaults when a key, or the section, is absent).
+    pub fn design_paths(&self) -> DesignPaths {
+        let d = self.doc.section("design");
+        let get =
+            |key: &str, default: &str| d.and_then(|s| s.str(key)).unwrap_or(default).to_string();
+        DesignPaths {
+            brief: get("brief", "design/DESIGN_BRIEF.md"),
+            reasoning: get("reasoning", "design/DESIGN_REASONING.md"),
+            architecture: get("architecture", "design/DESIGN_ARCHITECTURE.md"),
+            decisions: get("decisions", "design/DESIGN_DECISIONS.md"),
+            history: get("history", "design/DESIGN_HISTORY.md"),
+        }
+    }
+
     /// Raw CSS from the `[custom_css].rules` escape hatch, if any.
     pub fn custom_css(&self) -> Option<&str> {
         self.doc
@@ -88,5 +118,28 @@ impl Spec {
             .and_then(|s| s.str("rules"))
             .map(str::trim)
             .filter(|s| !s.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::toml_lite::Document;
+
+    #[test]
+    fn design_paths_default_when_absent() {
+        let spec = Spec::new(Document::parse("[project]\nname = \"X\"\n").unwrap());
+        let p = spec.design_paths();
+        assert_eq!(p.brief, "design/DESIGN_BRIEF.md");
+        assert_eq!(p.reasoning, "design/DESIGN_REASONING.md");
+        assert_eq!(p.history, "design/DESIGN_HISTORY.md");
+    }
+
+    #[test]
+    fn design_paths_honor_overrides() {
+        let spec = Spec::new(Document::parse("[design]\nbrief = \"docs/brief.md\"\n").unwrap());
+        assert_eq!(spec.design_paths().brief, "docs/brief.md");
+        // unspecified keys still fall back to defaults
+        assert_eq!(spec.design_paths().decisions, "design/DESIGN_DECISIONS.md");
     }
 }

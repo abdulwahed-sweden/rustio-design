@@ -5,15 +5,22 @@
 //! doctrine and compiles it into a `tokens.css` the running admin serves via
 //! `RUSTIO_TOKENS_CSS` — no recompile, no hand-edited CSS, no dizziness.
 //!
+//! Above the token layer sits the design-memory stack — the WHY and WHAT layers
+//! (DESIGN_BRIEF/REASONING/ARCHITECTURE/DECISIONS/HISTORY) that Claude Design
+//! reasons over BEFORE touching tokens. `context` assembles them into one stream;
+//! the higher layers are reserved memory, not yet compiled into output.
+//!
 //! Commands:
-//!   init     scaffold a starter rustio.design.toml
+//!   init     scaffold the spec + design-memory artifacts
 //!   build    validate + generate artifacts into the output dir
 //!   check    validate + detect drift/staleness (CI-friendly, read-only)
+//!   context  assemble the whole design stack (WHY→WHAT→HOW) into one stream
 //!   wire     print the env exports that serve the generated output
 //!   explain  print the workflow and the iron rules
 
 mod allowlist;
 mod color;
+mod context;
 mod manifest;
 mod sha256;
 mod spec;
@@ -38,6 +45,7 @@ fn main() -> ExitCode {
         "init" => cmd_init(&spec_path),
         "build" => cmd_build(&spec_path),
         "check" => cmd_check(&spec_path),
+        "context" => cmd_context(&spec_path),
         "wire" => cmd_wire(&spec_path),
         "explain" => {
             print_explain();
@@ -71,16 +79,85 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 // init
 // ─────────────────────────────────────────────────────────────────────────
 
+/// The design-memory artifacts scaffolded alongside the spec, embedded so
+/// `init` is self-contained (mirrors rustio-admin's `include_str!` ethos).
+const DESIGN_SCAFFOLD: &[(&str, &str)] = &[
+    (
+        "design/DESIGN_BRIEF.md",
+        include_str!("../assets/design/DESIGN_BRIEF.md"),
+    ),
+    (
+        "design/DESIGN_REASONING.md",
+        include_str!("../assets/design/DESIGN_REASONING.md"),
+    ),
+    (
+        "design/DESIGN_ARCHITECTURE.md",
+        include_str!("../assets/design/DESIGN_ARCHITECTURE.md"),
+    ),
+    (
+        "design/DESIGN_DECISIONS.md",
+        include_str!("../assets/design/DESIGN_DECISIONS.md"),
+    ),
+    (
+        "design/DESIGN_HISTORY.md",
+        include_str!("../assets/design/DESIGN_HISTORY.md"),
+    ),
+];
+
+/// Scaffold the spec and the design-memory artifacts.
+///
+/// Adoption-friendly and non-destructive: writes the spec only if absent, and
+/// creates any missing `design/DESIGN_*.md` artifact without ever overwriting an
+/// existing one. An existing project can run `init` to reserve the new design
+/// layers without risking its spec or its authored memory.
 fn cmd_init(spec_path: &str) -> Result<(), String> {
+    let root = spec_root(spec_path);
+    let mut created: Vec<String> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+
     if std::path::Path::new(spec_path).exists() {
-        return Err(format!(
-            "{spec_path} already exists — refusing to overwrite your source of truth"
-        ));
+        skipped.push(spec_path.to_string());
+    } else {
+        write_file(spec_path, STARTER_SPEC)?;
+        created.push(spec_path.to_string());
     }
-    std::fs::write(spec_path, STARTER_SPEC)
-        .map_err(|e| format!("could not write {spec_path}: {e}"))?;
-    println!("✓ wrote {spec_path}");
-    println!("  next: edit it, then run `rustio-design build`");
+
+    for (rel, body) in DESIGN_SCAFFOLD {
+        let path = root.join(rel);
+        if path.exists() {
+            skipped.push(path.display().to_string());
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&path, body)
+            .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+        created.push(path.display().to_string());
+    }
+
+    for c in &created {
+        println!("✓ created {c}");
+    }
+    for s in &skipped {
+        println!("· kept    {s}  (already present)");
+    }
+    println!();
+    println!("  design memory reserved. Capture intent in design/DESIGN_BRIEF.md,");
+    println!("  reason in design/DESIGN_REASONING.md, then edit tokens and `build`.");
+    println!("  See the whole stack any time with `rustio-design context`.");
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// context  (assemble the WHY→WHAT→HOW design stack into one stream)
+// ─────────────────────────────────────────────────────────────────────────
+
+fn cmd_context(spec_path: &str) -> Result<(), String> {
+    let (_src, spec) = load_spec(spec_path)?;
+    let root = spec_root(spec_path);
+    print!("{}", context::build_context(&spec, &root));
     Ok(())
 }
 
@@ -144,6 +221,24 @@ fn cmd_check(spec_path: &str) -> Result<(), String> {
     let report = validate::validate(&spec);
     for w in &report.warnings {
         eprintln!("  warning: {w}");
+    }
+
+    // Design memory is active, not optional: surface a missing higher layer as a
+    // warning so it can't quietly drift out of existence. Non-blocking.
+    let root = spec_root(spec_path);
+    let p = spec.design_paths();
+    for (label, rel) in [
+        ("brief", &p.brief),
+        ("reasoning", &p.reasoning),
+        ("architecture", &p.architecture),
+        ("decisions", &p.decisions),
+        ("history", &p.history),
+    ] {
+        if !root.join(rel).exists() {
+            eprintln!(
+                "  warning: design memory `{label}` missing ({rel}) — run `rustio-design init`"
+            );
+        }
     }
 
     let out_dir = spec.out_dir().to_string();
@@ -213,6 +308,16 @@ fn cmd_wire(spec_path: &str) -> Result<(), String> {
 // ─────────────────────────────────────────────────────────────────────────
 // helpers
 // ─────────────────────────────────────────────────────────────────────────
+
+/// The directory that holds the spec — the root the design-memory artifact
+/// paths are resolved against. Empty/no parent resolves to the current dir.
+fn spec_root(spec_path: &str) -> std::path::PathBuf {
+    std::path::Path::new(spec_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
 
 /// Read and parse the spec file into `(raw_source, Spec)`.
 fn load_spec(spec_path: &str) -> Result<(String, Spec), String> {
@@ -331,25 +436,39 @@ fn print_help() {
          \x20 rustio-design <command> [--spec <path>]\n\
          \n\
          COMMANDS:\n\
-         \x20 init      Scaffold a starter rustio.design.toml\n\
+         \x20 init      Scaffold the spec + design-memory artifacts (DESIGN_*.md)\n\
          \x20 build     Validate the spec and generate tokens.css + manifest\n\
          \x20 check     Validate + detect drift/staleness (read-only, CI-friendly)\n\
+         \x20 context   Assemble the design stack (WHY→WHAT→HOW) into one stream\n\
          \x20 wire      Print the env export that serves the generated output\n\
          \x20 explain   Print the workflow and the iron rules\n\
          \x20 help      Show this message\n\
          \n\
-         THE ONE RULE: edit rustio.design.toml; never hand-edit generated/."
+         THE STACK: Brief → Reasoning → Architecture → Spec → Generated.\n\
+         THE ONE RULE: edit rustio.design.toml; never hand-edit generated/.\n\
+         Reason in DESIGN_REASONING.md BEFORE changing tokens (`/design-reason`)."
     );
 }
 
 fn print_explain() {
     println!(
-        "How rustio-design keeps manual editing sane\n\
-         ===========================================\n\
+        "The rustio-design stack — design memory, not just tokens\n\
+         =======================================================\n\
          \n\
-         Source of truth     rustio.design.toml      (you + Claude edit ONLY this)\n\
-         Generated artifact  generated/tokens.css    (never edit by hand)\n\
-         Runtime seam        RUSTIO_TOKENS_CSS        (framework appends it last)\n\
+         WHY        design/DESIGN_BRIEF.md         business context, intent, visual direction\n\
+         Reasoning  design/DESIGN_REASONING.md     the ADR trail — justify BEFORE the spec\n\
+         WHAT       design/DESIGN_ARCHITECTURE.md  information architecture, navigation, hierarchy\n\
+         Memory     design/DESIGN_DECISIONS.md     the durable ledger of accepted decisions\n\
+         Memory     design/DESIGN_HISTORY.md       how (and why) the design evolved\n\
+         HOW        rustio.design.toml             the validated token spec\n\
+         Output     generated/tokens.css           machine-owned; never hand-edited\n\
+         \n\
+         Reason TOP-DOWN (WHY → WHAT → HOW); generate BOTTOM-UP. Today only the\n\
+         HOW layer compiles to output — the WHY/WHAT layers are active design\n\
+         memory, surfaced together by `rustio-design context`.\n\
+         \n\
+         Flow (mirrors RustIO's Plan → Review → Approve → Apply):\n\
+         \x20 Brief → Reasoning → Architecture → Spec → Generated\n\
          \n\
          Why this removes the dizziness:\n\
          \n\
@@ -386,6 +505,18 @@ out_dir = "generated"
 # Point this at your rustio-admin checkout to unlock the WCAG-safe brand
 # ramp ([brand].derive). The token overrides below work with or without it.
 # rustio_admin_path = "../rustio-admin"
+
+# ── Design memory (the WHY and WHAT layers) ──────────────────────────
+# Claude Design reasons from these BEFORE touching tokens. They are
+# first-class design memory, not documentation: `rustio-design context`
+# assembles them into one narrative; `init` scaffolds them. Paths below
+# are the defaults — change them only if you relocate the files.
+[design]
+brief        = "design/DESIGN_BRIEF.md"         # WHY  — context, intent, visual direction
+reasoning    = "design/DESIGN_REASONING.md"     # the ADR trail (justify before the spec)
+architecture = "design/DESIGN_ARCHITECTURE.md"  # WHAT — IA, navigation, UX hierarchy
+decisions    = "design/DESIGN_DECISIONS.md"     # accepted-decision ledger
+history      = "design/DESIGN_HISTORY.md"       # evolution over time
 
 [brand]
 # Your primary brand color. With derive = true (and rustio_admin_path set),

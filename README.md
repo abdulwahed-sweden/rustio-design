@@ -37,17 +37,33 @@ mirroring how the framework's own `rio-theme` engine produces `tokens.css`.
 
 ## The model
 
+The token spec is the *bottom* of a stack. This bridge is **design memory** —
+it preserves design intent, rationale, and evolution, so a future developer
+understands not only what the design is, but *why it became that way*.
+
 ```
-  rustio.design.toml          ← the ONE file you and Claude edit
+  WHY        design/DESIGN_BRIEF.md         business context · intent · visual direction
+  Reasoning  design/DESIGN_REASONING.md     the ADR trail — justify BEFORE the spec
+  WHAT       design/DESIGN_ARCHITECTURE.md  information architecture · navigation · hierarchy
+  Memory     design/DESIGN_DECISIONS.md     the durable ledger of accepted decisions
+  Memory     design/DESIGN_HISTORY.md       how (and why) the design evolved
+  HOW        rustio.design.toml             the validated token spec  ← compiles today
           │
           │   rustio-design build   (validate against doctrine, then compile)
           ▼
-  generated/tokens.css        ← generated; never hand-edited (tamper-evident)
+  generated/tokens.css                       machine-owned; never hand-edited
           │
           │   RUSTIO_TOKENS_CSS=…/tokens.css cargo run
           ▼
   rustio-admin appends it after its baked CSS — later :root wins, no recompile
 ```
+
+**Reason top-down (WHY → WHAT → HOW); generate bottom-up.** Today only the HOW
+layer compiles to output — the higher layers are *active design memory*, surfaced
+together by `rustio-design context` so Claude Design and Claude Code reason over
+one coherent narrative before touching a single token. The pipeline is
+**Brief → Reasoning → Architecture → Spec → Generated** (mirroring RustIO's
+Plan → Review → Approve → Apply); `/design-reason` enforces it.
 
 ## Install
 
@@ -75,11 +91,26 @@ source generated/wire.env && cargo run
 
 | Command   | What it does |
 |-----------|--------------|
-| `init`    | Scaffold a starter `rustio.design.toml` (won't overwrite an existing one). |
+| `init`    | Scaffold the spec **and** the design-memory artifacts (`design/DESIGN_*.md`). Non-destructive: never overwrites an existing spec or authored memory — safe to run in an existing project to reserve the layers. |
 | `build`   | Validate the spec against the doctrine, then generate `tokens.css`, `wire.env`, a guard-rail `README.md`, and a `.manifest` of content hashes. |
-| `check`   | **Read-only.** Re-validate, and detect **staleness** (spec changed, not rebuilt) and **drift** (a generated file was hand-edited). Non-zero exit on any problem — drop it into CI. |
+| `check`   | **Read-only.** Re-validate; detect **staleness** (spec changed, not rebuilt), **drift** (a generated file was hand-edited), and **missing design memory** (a higher layer went absent). Non-zero exit on any problem — drop it into CI. |
+| `context` | Assemble the whole stack — Brief, Reasoning, Architecture, Decisions, History, and the token spec — into one canonical stream to read **before** changing anything. |
 | `wire`    | Print the `RUSTIO_TOKENS_CSS` export that serves the generated output. |
-| `explain` | Print the workflow and the iron rules. |
+| `explain` | Print the stack, the workflow, and the iron rules. |
+
+### Design memory & the reasoning pass
+
+`init` scaffolds five first-class artifacts under `design/` (referenced from the
+spec's `[design]` section): **DESIGN_BRIEF** (WHY), **DESIGN_REASONING** (the
+ADR trail), **DESIGN_ARCHITECTURE** (WHAT), **DESIGN_DECISIONS** (the ledger),
+and **DESIGN_HISTORY** (the evolution). They are Markdown + frontmatter — prose
+for the narrative Claude reasons over, structure for the machine-actionable bits.
+
+The reasoning layer is enforced, not optional: `/design-reason` makes Claude
+justify a change (context, alternatives considered, *why the rejected ones lost*,
+spec/architecture impact) and get approval **before** editing tokens — then
+record it in `DESIGN_DECISIONS.md` and `DESIGN_HISTORY.md`. The trail exists from
+day one so the *why* behind every token is auditable.
 
 All commands accept `--spec <path>` (default `rustio.design.toml`).
 
@@ -143,7 +174,9 @@ This repo ships first-class Claude Code support (see [`CLAUDE.md`](CLAUDE.md) an
 > **Claude edits `rustio.design.toml` and runs `rustio-design build`. Claude
 > never edits anything under `generated/`.**
 
-Slash commands: `/design-edit`, `/design-build`, `/design-check`, `/design-explain`.
+Slash commands: `/design-context` (load the stack), `/design-reason` (justify a
+change before touching tokens), `/design-edit`, `/design-build`, `/design-check`,
+`/design-explain`.
 
 ## CI
 

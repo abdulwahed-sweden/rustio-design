@@ -14,6 +14,18 @@ out_dir = "generated"
 # ramp ([brand].derive). The token overrides below work with or without it.
 # rustio_admin_path = "../rustio-admin"
 
+# ── Design memory (the WHY and WHAT layers) ──────────────────────────
+# Claude Design reasons from these BEFORE touching tokens. They are
+# first-class design memory, not documentation: `rustio-design context`
+# assembles them into one narrative; `init` scaffolds them. Paths below
+# are the defaults — change them only if you relocate the files.
+[design]
+brief        = "design/DESIGN_BRIEF.md"         # WHY  — context, intent, visual direction
+reasoning    = "design/DESIGN_REASONING.md"     # the ADR trail (justify before the spec)
+architecture = "design/DESIGN_ARCHITECTURE.md"  # WHAT — IA, navigation, UX hierarchy
+decisions    = "design/DESIGN_DECISIONS.md"     # accepted-decision ledger
+history      = "design/DESIGN_HISTORY.md"       # evolution over time
+
 [brand]
 # Your primary brand color. With derive = true (and rustio_admin_path set),
 # rustio-admin's rio-theme engine computes a contrast-safe ramp for you.
