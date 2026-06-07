@@ -22,6 +22,7 @@ mod allowlist;
 mod color;
 mod context;
 mod manifest;
+mod nav;
 mod sha256;
 mod spec;
 mod tokens;
@@ -182,31 +183,73 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
         ));
     }
 
+    // --- navigation layer (WHAT → output); refuse on structural errors ---
+    let root = spec_root(spec_path);
+    let navigation = spec.navigation();
+    if let Some(nav) = &navigation {
+        let models = read_project_models(&root);
+        let lint = nav::lint(nav, models.as_deref());
+        for w in &lint.warnings {
+            eprintln!("  warning: {w}");
+        }
+        if !lint.errors.is_empty() {
+            for e in &lint.errors {
+                eprintln!("  error: {e}");
+            }
+            return Err(format!(
+                "{} navigation error(s) — nothing was generated",
+                lint.errors.len()
+            ));
+        }
+    }
+
     let ramp = derive_brand_ramp(&spec);
     let css = tokens::build_tokens_css(&spec, ramp.as_deref());
 
     let out_dir = spec.out_dir().to_string();
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("could not create {out_dir}/: {e}"))?;
 
-    let tokens_path = format!("{out_dir}/tokens.css");
-    write_file(&tokens_path, &css)?;
-
-    let wire = wire_env_text(&tokens_path)?;
-    write_file(&format!("{out_dir}/wire.env"), &wire)?;
-
-    let readme = generated_readme(spec.project_name());
-    write_file(&format!("{out_dir}/README.md"), &readme)?;
-
+    // Manifest paths are relative to the spec root, so generated artifacts may
+    // live outside out_dir (e.g. a template override in the project's templates).
     let mut m = Manifest::new();
     m.set(spec_path, &sha256_hex(src.as_bytes()));
-    m.set("tokens.css", &sha256_hex(css.as_bytes()));
-    m.set("wire.env", &sha256_hex(wire.as_bytes()));
-    m.set("README.md", &sha256_hex(readme.as_bytes()));
+
+    let tokens_path = format!("{out_dir}/tokens.css");
+    write_file(&tokens_path, &css)?;
+    m.set(&tokens_path, &sha256_hex(css.as_bytes()));
+
+    let wire = wire_env_text(&tokens_path)?;
+    let wire_path = format!("{out_dir}/wire.env");
+    write_file(&wire_path, &wire)?;
+    m.set(&wire_path, &sha256_hex(wire.as_bytes()));
+
+    let readme = generated_readme(spec.project_name());
+    let readme_path = format!("{out_dir}/README.md");
+    write_file(&readme_path, &readme)?;
+    m.set(&readme_path, &sha256_hex(readme.as_bytes()));
+
+    let mut nav_msg = None;
+    if let Some(nav) = &navigation {
+        let html = nav::build_sidebar_html(spec.project_name(), nav);
+        let nav_path = root.join(&nav.out);
+        if let Some(parent) = nav_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&nav_path, &html)
+            .map_err(|e| format!("could not write {}: {e}", nav_path.display()))?;
+        m.set(&nav.out, &sha256_hex(html.as_bytes()));
+        nav_msg = Some(nav.out.clone());
+    }
+
     write_file(&format!("{out_dir}/.manifest"), &m.to_text())?;
 
     println!("✓ built {tokens_path}");
     if ramp.is_some() {
         println!("  brand ramp: derived via rustio-admin rio-theme");
+    }
+    if let Some(out) = nav_msg {
+        println!("  navigation: {out}  (serve via RUSTIO_TEMPLATE_DIR)");
     }
     println!("  serve it:   rustio-design wire   (or see {out_dir}/wire.env)");
     Ok(())
@@ -241,6 +284,18 @@ fn cmd_check(spec_path: &str) -> Result<(), String> {
         }
     }
 
+    // Navigation layer lint (non-blocking warnings; structural errors counted).
+    let nav_errors = if let Some(nav) = spec.navigation() {
+        let models = read_project_models(&root);
+        let lint = nav::lint(&nav, models.as_deref());
+        for w in &lint.warnings {
+            eprintln!("  warning: {w}");
+        }
+        lint.errors
+    } else {
+        Vec::new()
+    };
+
     let out_dir = spec.out_dir().to_string();
     let manifest_path = format!("{out_dir}/.manifest");
     let mtext = std::fs::read_to_string(&manifest_path)
@@ -250,6 +305,10 @@ fn cmd_check(spec_path: &str) -> Result<(), String> {
     let mut problems = 0usize;
 
     for e in &report.errors {
+        eprintln!("  error:   {e}");
+        problems += 1;
+    }
+    for e in &nav_errors {
         eprintln!("  error:   {e}");
         problems += 1;
     }
@@ -271,7 +330,8 @@ fn cmd_check(spec_path: &str) -> Result<(), String> {
         if path == spec_path {
             continue;
         }
-        let full = format!("{out_dir}/{path}");
+        let full = root.join(path);
+        let full = full.to_string_lossy().to_string();
         match std::fs::read(&full) {
             Ok(bytes) if sha256_hex(&bytes) == *hash => {}
             Ok(_) => {
@@ -317,6 +377,13 @@ fn spec_root(spec_path: &str) -> std::path::PathBuf {
         .filter(|p| !p.as_os_str().is_empty())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
+/// Best-effort read of the project's registered models from `<root>/src/main.rs`,
+/// for navigation coverage checks. `None` if the file can't be read.
+fn read_project_models(root: &std::path::Path) -> Option<Vec<String>> {
+    let src = std::fs::read_to_string(root.join("src/main.rs")).ok()?;
+    Some(nav::registered_models(&src))
 }
 
 /// Read and parse the spec file into `(raw_source, Spec)`.
@@ -544,6 +611,19 @@ lg      = "12px"
 
 [typography]
 # font-sans = "'Inter', system-ui, -apple-system, sans-serif"
+
+# ── Navigation (WHAT → output) ───────────────────────────────────────
+# Group the admin sidebar by domain. Each `Group = "Item, Item"` matches
+# the model display names rustio-admin shows; order is preserved. Reserved
+# keys: `_hidden` (models reached via their parent, kept out of the nav)
+# and `_out` (the generated _sidebar.html path, served via RUSTIO_TEMPLATE_DIR).
+# Reason in DESIGN_ARCHITECTURE.md / DESIGN_REASONING.md before changing this.
+# [navigation]
+# Catalogue = "Products, Categories"
+# Customers = "Customers"
+# Sales     = "Orders, Payments"
+# _hidden   = "Order items, Cart items"
+# _out      = "generated/templates/admin/_sidebar.html"
 
 [custom_css]
 # Escape hatch for the rare rule with no token. Validated: no @import, no

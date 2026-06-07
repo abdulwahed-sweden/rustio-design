@@ -112,6 +112,28 @@ spec/architecture impact) and get approval **before** editing tokens — then
 record it in `DESIGN_DECISIONS.md` and `DESIGN_HISTORY.md`. The trail exists from
 day one so the *why* behind every token is auditable.
 
+### Navigation layer (first WHAT → output)
+
+Beyond tokens, the bridge can compile a slice of the **WHAT** layer. Declare the
+admin sidebar by domain in `[navigation]`:
+
+```toml
+[navigation]
+Catalogue = "Products, Categories"   # Group = "Item, Item" (ordered)
+Customers = "Customers"
+Sales     = "Orders, Payments"
+_hidden   = "Order items, Cart items"     # reached via their parent, kept out of nav
+_out      = "generated/templates/admin/_sidebar.html"
+```
+
+`build` generates a `_sidebar.html` override that buckets rustio-admin's own
+`entries` into these groups — reusing the framework's URLs and labels, hiding the
+buried models, and preserving the Home / Auth / Developer sections. It's served
+via `RUSTIO_TEMPLATE_DIR`, the recompile-free template seam. The validator catches
+duplicate entries and (best-effort, by reading the project's `src/main.rs`) warns
+when a registered model is left unplaced or a nav item matches no model. The
+generated file is manifest-tracked and drift-detected like any other output.
+
 All commands accept `--spec <path>` (default `rustio.design.toml`).
 
 ## The spec
