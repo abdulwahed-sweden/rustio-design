@@ -105,9 +105,21 @@ The canonical token vocabulary lives in `src/allowlist.rs` and mirrors
 key is **rejected with a suggestion** — so if `build` says "did you mean
 `--rio-accent`?", fix the key in the spec; don't try to force it.
 
+## Navigation layer (`[navigation]`)
+
+The first WHAT-layer slice that compiles to output. `Group = "Item, Item"`
+(ordered, matched against rustio-admin's `entry.display_name`); reserved
+`_hidden` (models reached via their parent, kept out of nav) and `_out` (the
+generated `_sidebar.html` path, relative to the spec root). `build` emits a
+`_sidebar.html` override consumed via `RUSTIO_TEMPLATE_DIR`. It is a WHAT-layer
+decision: reason in `DESIGN_ARCHITECTURE.md` / `DESIGN_REASONING.md` (`/design-reason`)
+before changing it. Coverage is validated best-effort against the project's
+`src/main.rs` models. Tracking issue: rustio-design#1.
+
 ## How generation maps to the framework
 
-There is exactly one runtime seam this tool targets: **`RUSTIO_TOKENS_CSS`**.
+This tool targets two recompile-free seams: **`RUSTIO_TOKENS_CSS`** (tokens) and
+**`RUSTIO_TEMPLATE_DIR`** (the generated `_sidebar.html`). For tokens:
 rustio-admin appends the file after its baked CSS bundle, and later `:root`
 declarations win — so every token override here takes effect with no recompile
 and no source change. This is the same mechanism the framework's own

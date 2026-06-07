@@ -140,6 +140,23 @@ fn token_spec(spec: &Spec) -> String {
         Some(_) => s.push_str("custom_css: present (validated escape hatch)\n"),
         None => s.push_str("custom_css: none\n"),
     }
+
+    // Navigation (WHAT compiled to a sidebar override) — shown here as the
+    // concrete projection of the architecture's navigation decision.
+    match spec.navigation() {
+        Some(nav) => {
+            s.push_str("\nnavigation (compiled → ");
+            s.push_str(&nav.out);
+            s.push_str("):\n");
+            for g in &nav.groups {
+                s.push_str(&format!("  {}: {}\n", g.label, g.items.join(", ")));
+            }
+            if !nav.hidden.is_empty() {
+                s.push_str(&format!("  (hidden: {})\n", nav.hidden.join(", ")));
+            }
+        }
+        None => s.push_str("navigation: (none declared — flat model list)\n"),
+    }
     s
 }
 

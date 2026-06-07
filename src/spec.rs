@@ -25,6 +25,26 @@ pub struct DesignPaths {
     pub history: String,
 }
 
+/// One sidebar group: a label and its ordered member items (by display name).
+pub struct NavGroup {
+    /// The section label shown in the sidebar (e.g. "Catalogue").
+    pub label: String,
+    /// Member items, in declared order, matched against `entry.display_name`.
+    pub items: Vec<String>,
+}
+
+/// The navigation layer parsed from `[navigation]` (the WHAT layer's compiled
+/// projection). Reserved keys: `_hidden` (omitted from the sidebar) and `_out`
+/// (the generated template's path, relative to the spec root).
+pub struct Navigation {
+    /// Ordered groups.
+    pub groups: Vec<NavGroup>,
+    /// Items deliberately kept out of the sidebar (reached via their parent).
+    pub hidden: Vec<String>,
+    /// Output path for the generated `_sidebar.html`, relative to the spec root.
+    pub out: String,
+}
+
 /// One token override pulled from the spec, before resolution.
 pub struct RawToken {
     /// The originating section (`colors` / `spacing` / `radius` / `typography`).
@@ -111,6 +131,36 @@ impl Spec {
         }
     }
 
+    /// The navigation layer from `[navigation]`, if declared (and non-empty).
+    ///
+    /// `Group = "Item, Item"` (ordered); reserved `_hidden = "Item, Item"` and
+    /// `_out = "path"`. Returns `None` when the section is absent or has no groups.
+    pub fn navigation(&self) -> Option<Navigation> {
+        let s = self.doc.section("navigation")?;
+        let mut groups = Vec::new();
+        let mut hidden = Vec::new();
+        let mut out = "generated/templates/admin/_sidebar.html".to_string();
+        for (k, v) in &s.entries {
+            let Some(val) = v.as_str() else { continue };
+            match k.as_str() {
+                "_hidden" => hidden = split_items(val),
+                "_out" => out = val.to_string(),
+                _ => groups.push(NavGroup {
+                    label: k.clone(),
+                    items: split_items(val),
+                }),
+            }
+        }
+        if groups.is_empty() {
+            return None;
+        }
+        Some(Navigation {
+            groups,
+            hidden,
+            out,
+        })
+    }
+
     /// Raw CSS from the `[custom_css].rules` escape hatch, if any.
     pub fn custom_css(&self) -> Option<&str> {
         self.doc
@@ -119,6 +169,14 @@ impl Spec {
             .map(str::trim)
             .filter(|s| !s.is_empty())
     }
+}
+
+/// Split a comma-separated item list, trimming and dropping empties.
+fn split_items(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
