@@ -122,13 +122,18 @@ The second WHAT-layer slice that compiles to output (after navigation). Per-tabl
 record layout: `mode` + role lists `primary` / `secondary` / `detail` / `hidden`
 (comma-separated cells; `+` composes fields, `(style)` hints stacked/inline/badge;
 reserved `model` / `source` / `_out`). `build` validates field names against the
-table's columns (best-effort, set `model`) and freezes each table to
-`generated/views/<table>.view.json` — the frozen file a runtime renderer reads
-(not a template; the bridge never guesses at rustio-admin's markup). Author it
-with the Adaptive View Editor; extract columns from your models with
+table's columns (best-effort, set `model`) and emits, per table, both
+`generated/views/<table>.view.json` (the durable spec) **and** a per-model
+`generated/templates/admin/<table>/list.html` override served via
+`RUSTIO_TEMPLATE_DIR` — the same seam navigation uses, so there is **no
+rustio-admin change** (a runtime reader would violate its "no schema-driven
+runtime" doctrine). The override reproduces the framework's list chrome verbatim
+and drives only the columns from the spec; it mirrors a specific `list.html`
+(`LIST_TEMPLATE_BASED_ON` in `src/list_tpl.rs`) — re-sync on framework upgrades.
+Author it with the Adaptive View Editor; extract columns from your models with
 `rustio-design schema --all`. It is a WHAT-layer decision: reason in
 `DESIGN_ARCHITECTURE.md` / `DESIGN_REASONING.md` first. Full guide:
-`docs/VIEW_LAYER.md`. Design rationale: `DESIGN_REASONING.md` R-001.
+`docs/VIEW_LAYER.md`. Design rationale: `DESIGN_REASONING.md` R-001 + R-002.
 
 ## How generation maps to the framework
 

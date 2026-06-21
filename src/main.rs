@@ -21,6 +21,7 @@
 mod allowlist;
 mod color;
 mod context;
+mod list_tpl;
 mod manifest;
 mod nav;
 mod schema;
@@ -270,7 +271,10 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
         nav_msg = Some(nav.out.clone());
     }
 
-    // Freeze each table view to a deterministic *.view.json the renderer reads.
+    // For each table view, freeze (a) the deterministic *.view.json spec and
+    // (b) a per-model list.html override the framework serves via
+    // RUSTIO_TEMPLATE_DIR — the same seam navigation uses. Both are
+    // manifest-tracked so a hand-edit is caught as drift.
     let mut view_count = 0usize;
     for view in &views {
         let json = views::build_view_json(spec.project_name(), view);
@@ -282,6 +286,18 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
         std::fs::write(&view_path, &json)
             .map_err(|e| format!("could not write {}: {e}", view_path.display()))?;
         m.set(&view.out, &sha256_hex(json.as_bytes()));
+
+        let tpl = list_tpl::build_list_template(spec.project_name(), view);
+        let tpl_rel = format!("{out_dir}/templates/admin/{}/list.html", view.table);
+        let tpl_path = root.join(&tpl_rel);
+        if let Some(parent) = tpl_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&tpl_path, &tpl)
+            .map_err(|e| format!("could not write {}: {e}", tpl_path.display()))?;
+        m.set(&tpl_rel, &sha256_hex(tpl.as_bytes()));
+
         view_count += 1;
     }
 
@@ -296,7 +312,7 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
     }
     if view_count > 0 {
         println!(
-            "  views:      {view_count} table(s) → *.view.json  (read at runtime by the renderer)"
+            "  views:      {view_count} table(s) → *.view.json + list.html override  (serve via RUSTIO_TEMPLATE_DIR)"
         );
     }
     println!("  serve it:   rustio-design wire   (or see {out_dir}/wire.env)");

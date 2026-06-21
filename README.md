@@ -152,10 +152,13 @@ hidden    = "id, internal_uuid"                     # never shown
 ```
 
 `build` validates field names against the table's columns (typo → suggestion;
-unplaced column → warning) and freezes the layout to
-`generated/views/<table>.view.json` — the frozen file a runtime renderer reads.
-The bridge emits **data, not a template**, so it never guesses at rustio-admin's
-record markup. Author it visually with the **Adaptive View Editor**
+unplaced column → warning) and emits two artifacts per table: the durable
+`generated/views/<table>.view.json` spec **and** a per-model
+`generated/templates/admin/<table>/list.html` override the framework serves via
+`RUSTIO_TEMPLATE_DIR` — the same recompile-free seam navigation uses, so
+**rustio-admin is never modified**. The override reproduces the framework's list
+chrome (search/filter/sort/bulk/pagination) verbatim and drives only the columns
+from your spec. Author it visually with the **Adaptive View Editor**
 (`view_editor.html`); seed the editor's fields with `rustio-design schema --all`.
 Full walkthrough: [`docs/VIEW_LAYER.md`](docs/VIEW_LAYER.md).
 

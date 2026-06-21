@@ -45,6 +45,55 @@ updated: ""           # YYYY-MM-DD
 
 _No reasoning entries yet. Run `/design-reason` to record the first._
 
+## R-002 · View-layer consumption — a generated list.html override, not a runtime reader
+
+- **Date:** 2026-06-21
+- **Status:** proposed
+- **Serves:** completing R-001 — making the frozen view-spec actually reshape the
+  rendered record list in rustio-admin.
+- **Context:** R-001 left consumption open and leaned toward "a small renderer on
+  the rustio-admin side reads `*.view.json`". Reading the framework first
+  (`crates/rustio-admin/src/admin/render.rs::build_list_ctx`, `assets/templates/
+  admin/list.html`, and its `CLAUDE.md`) changed the picture. rustio-admin has
+  hard, CI/review-enforced rules: **"No second runtime — `ConcreteOps<M>` is the
+  runtime, no schema-driven sibling"** and **"if a feature wants schema-driven
+  metadata, the right layer is a future `rustio-pro` crate — not this one."** A
+  runtime reader of a view-spec is exactly that forbidden schema-driven metadata.
+  Crucially, the framework already solved the same shape for navigation **without
+  a framework hook**: rustio-design generates `_sidebar.html`, served via
+  `RUSTIO_TEMPLATE_DIR`.
+- **Options considered:**
+  1. **Runtime hook in rustio-admin** that reads `*.view.json` and reshapes the
+     `fields`/columns. Smallest diff, reuses all chrome. Trade-off: violates the
+     "no second runtime / no schema-driven metadata" doctrine — would be rejected
+     in review on principle.
+  2. **Generated per-model `list.html` override** in rustio-design, served via
+     `RUSTIO_TEMPLATE_DIR` (the navigation pattern). Zero framework change. The
+     framework's list chrome (search/filter/sort/bulk/pagination) is reproduced
+     verbatim; only the two `{% for f in fields %}` column loops become
+     view-spec-driven. Trade-off: the override mirrors a specific `list.html`
+     version, so framework chrome changes require a re-sync (tracked via
+     `LIST_TEMPLATE_BASED_ON` + the manifest).
+  3. **JS post-processing** of the rendered table. No Rust change, but JS-dependent
+     and a visible reflow — against the framework's "hand-written, no build step"
+     and calm-by-default posture.
+- **Decision:** Option 2. `build` emits, per `[views.<table>]`, both the
+  `*.view.json` (the durable spec) and a `generated/templates/admin/<table>/
+  list.html` override the framework serves through its existing template seam.
+- **Rationale:** It honours rustio-admin's doctrine exactly (no runtime change, no
+  schema-driven sibling), reuses the proven navigation seam, and keeps every
+  non-column feature byte-identical to upstream. The generated template was
+  validated to parse under the framework's own minijinja engine.
+- **Rejected because:** (1) breaks the framework's first-order architectural rule
+  and would not survive doctrine review; (3) introduces a runtime/JS dependency
+  and reflow the framework explicitly avoids.
+- **Spec impact:** none beyond R-001's `[views.<table>]`. New generated artifact
+  per table (`templates/admin/<table>/list.html`), manifest-tracked for drift.
+- **Architecture impact:** isolates framework-template drift to one constant
+  (`LIST_TEMPLATE_BASED_ON`) and the two column seams; column-header sort links
+  are dropped on reshaped columns in this first slice (the Sort dropdown is
+  unaffected). Cards/gallery modes remain future work.
+
 ## R-001 · The view layer — per-table record layouts compiled to a frozen spec
 
 - **Date:** 2026-06-21

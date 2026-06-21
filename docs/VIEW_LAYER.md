@@ -110,12 +110,33 @@ The frozen artifact:
 }
 ```
 
-## 5. Render it (rustio-admin side)
+## 5. Serve it (no framework change)
 
-The record renderer reads `generated/views/<table>.view.json` and draws the
-fields in order, honouring role + compose style + mode. This is the one piece
-that lives in `rustio-admin` (a small renderer or template partial); it is the
-follow-up to wire once, after which every table's layout is data, not code.
+`build` also emits a per-model template override:
+
+```
+generated/templates/admin/<table>/list.html
+```
+
+Point the running admin at it with the same seam navigation uses — no recompile,
+no edit to rustio-admin:
+
+```sh
+export RUSTIO_TEMPLATE_DIR="$PWD/generated/templates"
+cargo run            # the reshaped list is now live
+```
+
+The override reproduces the framework's list chrome (search, filters, sort, bulk
+actions, pagination) **verbatim** and drives only the columns from your view-spec
+— so nothing else changes. It mirrors a specific framework `list.html`; if you
+upgrade rustio-admin and its list chrome changes, re-run `build` (and bump
+`LIST_TEMPLATE_BASED_ON` in `src/list_tpl.rs`) to re-sync. The durable
+`*.view.json` is emitted alongside as the source of truth and for any future
+renderer (cards/gallery).
+
+> Why a template, not a runtime reader: rustio-admin forbids schema-driven
+> runtime metadata (a "second runtime"). Reshaping at build time via the template
+> seam honours that — see `DESIGN_REASONING.md` R-002.
 
 ---
 
