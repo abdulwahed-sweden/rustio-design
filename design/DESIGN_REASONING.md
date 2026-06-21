@@ -1,8 +1,8 @@
 ---
 artifact: DESIGN_REASONING
 layer: reasoning      # Brief → [Reasoning] → Architecture → Spec → Generated
-status: reserved
-updated: ""           # YYYY-MM-DD
+status: active
+updated: "2026-06-21"
 ---
 
 # Design Reasoning — the pass before the spec
@@ -30,7 +30,7 @@ updated: ""           # YYYY-MM-DD
 ## R-NNN · <short title>
 
 - **Date:** YYYY-MM-DD
-- **Status:** proposed | accepted | superseded by R-MMM
+- **Status:** accepted | accepted | superseded by R-MMM
 - **Serves:** <the Brief intent / Architecture goal this advances>
 - **Context:** <what prompted this — the request or the problem>
 - **Options considered:**
@@ -48,7 +48,7 @@ _No reasoning entries yet. Run `/design-reason` to record the first._
 ## R-002 · View-layer consumption — a generated list.html override, not a runtime reader
 
 - **Date:** 2026-06-21
-- **Status:** proposed
+- **Status:** accepted
 - **Serves:** completing R-001 — making the frozen view-spec actually reshape the
   rendered record list in rustio-admin.
 - **Context:** R-001 left consumption open and leaned toward "a small renderer on
@@ -97,7 +97,7 @@ _No reasoning entries yet. Run `/design-reason` to record the first._
 ## R-001 · The view layer — per-table record layouts compiled to a frozen spec
 
 - **Date:** 2026-06-21
-- **Status:** proposed
+- **Status:** accepted
 - **Serves:** the WHAT layer's "adaptive view" goal — let a developer decide how
   each table's records are laid out (which fields lead, which fold to the detail
   screen, which hide, which compose), authored once at build time and executed by
