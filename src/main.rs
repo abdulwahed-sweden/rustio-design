@@ -271,32 +271,33 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
         nav_msg = Some(nav.out.clone());
     }
 
-    // For each table view, freeze (a) the deterministic *.view.json spec and
-    // (b) a per-model list.html override the framework serves via
-    // RUSTIO_TEMPLATE_DIR — the same seam navigation uses. Both are
-    // manifest-tracked so a hand-edit is caught as drift.
+    // For each table view, freeze (a) the durable *.view.json spec under the
+    // output dir and (b) the per-model list.html override at the view's `_out`
+    // (default under generated/, or pointed at the framework's served template
+    // dir like navigation's _sidebar.html). Both are manifest-tracked so a
+    // hand-edit is caught as drift.
     let mut view_count = 0usize;
     for view in &views {
         let json = views::build_view_json(spec.project_name(), view);
-        let view_path = root.join(&view.out);
-        if let Some(parent) = view_path.parent() {
+        let json_rel = format!("{out_dir}/views/{}.view.json", view.table);
+        let json_path = root.join(&json_rel);
+        if let Some(parent) = json_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
         }
-        std::fs::write(&view_path, &json)
-            .map_err(|e| format!("could not write {}: {e}", view_path.display()))?;
-        m.set(&view.out, &sha256_hex(json.as_bytes()));
+        std::fs::write(&json_path, &json)
+            .map_err(|e| format!("could not write {}: {e}", json_path.display()))?;
+        m.set(&json_rel, &sha256_hex(json.as_bytes()));
 
         let tpl = list_tpl::build_list_template(spec.project_name(), view);
-        let tpl_rel = format!("{out_dir}/templates/admin/{}/list.html", view.table);
-        let tpl_path = root.join(&tpl_rel);
+        let tpl_path = root.join(&view.out);
         if let Some(parent) = tpl_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
         }
         std::fs::write(&tpl_path, &tpl)
             .map_err(|e| format!("could not write {}: {e}", tpl_path.display()))?;
-        m.set(&tpl_rel, &sha256_hex(tpl.as_bytes()));
+        m.set(&view.out, &sha256_hex(tpl.as_bytes()));
 
         view_count += 1;
     }
@@ -852,6 +853,7 @@ lg      = "12px"
 # secondary = "customer + phone (inline), status (badge), assigned_to"
 # detail    = "address, notes"
 # hidden    = "id, internal_uuid"
+# _out      = "templates/admin/bookings/list.html"   # where RUSTIO_TEMPLATE_DIR serves
 
 [custom_css]
 # Escape hatch for the rare rule with no token. Validated: no @import, no
