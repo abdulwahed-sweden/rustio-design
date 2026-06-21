@@ -94,6 +94,7 @@ source generated/wire.env && cargo run
 | `init`    | Scaffold the spec **and** the design-memory artifacts (`design/DESIGN_*.md`). Non-destructive: never overwrites an existing spec or authored memory — safe to run in an existing project to reserve the layers. |
 | `build`   | Validate the spec against the doctrine, then generate `tokens.css`, `wire.env`, a guard-rail `README.md`, and a `.manifest` of content hashes. |
 | `check`   | **Read-only.** Re-validate; detect **staleness** (spec changed, not rebuilt), **drift** (a generated file was hand-edited), and **missing design memory** (a higher layer went absent). Non-zero exit on any problem — drop it into CI. |
+| `schema`  | Extract a table's columns from its model struct into a view-editor schema — `--model <T>` for one, or `--all` for every registered model. Best-effort, zero-dependency (parses source, never compiles). |
 | `context` | Assemble the whole stack — Brief, Reasoning, Architecture, Decisions, History, and the token spec — into one canonical stream to read **before** changing anything. |
 | `wire`    | Print the `RUSTIO_TOKENS_CSS` export that serves the generated output. |
 | `explain` | Print the stack, the workflow, and the iron rules. |
@@ -133,6 +134,33 @@ via `RUSTIO_TEMPLATE_DIR`, the recompile-free template seam. The validator catch
 duplicate entries and (best-effort, by reading the project's `src/main.rs`) warns
 when a registered model is left unplaced or a nav item matches no model. The
 generated file is manifest-tracked and drift-detected like any other output.
+
+### View layer (per-table record layouts)
+
+The second WHAT-layer slice. The same renderer draws every table, but importance
+is **per table** — declare how each table's records are laid out in
+`[views.<table>]`:
+
+```toml
+[views.bookings]
+model     = "Booking"                               # validates field names
+mode      = "list"                                  # list | cards | gallery
+primary   = "booked_at"                             # leads the record
+secondary = "customer + phone (inline), status (badge), assigned_to"
+detail    = "address, notes"                        # detail screen only
+hidden    = "id, internal_uuid"                     # never shown
+```
+
+`build` validates field names against the table's columns (typo → suggestion;
+unplaced column → warning) and emits two artifacts per table: the durable
+`generated/views/<table>.view.json` spec **and** a per-model
+`generated/templates/admin/<table>/list.html` override the framework serves via
+`RUSTIO_TEMPLATE_DIR` — the same recompile-free seam navigation uses, so
+**rustio-admin is never modified**. The override reproduces the framework's list
+chrome (search/filter/sort/bulk/pagination) verbatim and drives only the columns
+from your spec. Author it visually with the **Adaptive View Editor**
+(`view_editor.html`); seed the editor's fields with `rustio-design schema --all`.
+Full walkthrough: [`docs/VIEW_LAYER.md`](docs/VIEW_LAYER.md).
 
 All commands accept `--spec <path>` (default `rustio.design.toml`).
 

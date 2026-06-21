@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RustIO · Adaptive View Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   Adaptive View Editor — build-time layout tool for rustio-admin.
+   Single-file build. Schema-driven fields + view-spec output.
+   Importance ramp = grey, interaction = cobalt (the colour rule).
+   ============================================================ */
+:root {
+  --ui-bg: #f3f6fd; --ui-surface: #ffffff; --ui-raised: #eef1f7; --ui-sunken: #e7ecf4;
+  --ui-line: #dbe0eb; --ui-line-strong: #c2cad9; --ui-dot: rgba(40,60,110,.05);
+  --ui-text-hi: #111722; --ui-text: #3b4453; --ui-text-mute: #677083; --ui-text-faint: #99a1b2;
+  --ui-accent: #2347ce; --ui-accent-hover: #1b38ac; --ui-accent-tint: rgba(35,71,206,.08);
+  --ui-success: #2f7d4f; --ui-success-tint: rgba(47,125,79,.12);
+  --ui-warning: #b5790f; --ui-warning-tint: rgba(181,121,15,.13);
+  --ui-danger: #b4322f; --ui-danger-tint: rgba(180,50,47,.1);
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Inter", -apple-system, system-ui, "Segoe UI", sans-serif;
+  --r-sm: 8px; --r-md: 10px;
+  --shadow-sm: 0 1px 2px rgba(17,23,34,.06);
+  --shadow-lg: 0 18px 40px -20px rgba(17,23,34,.28);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--sans); background: var(--ui-bg); color: var(--ui-text); height: 100vh; overflow: hidden; -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums lining-nums; }
+:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 4px; }
+.mono { font-family: var(--mono); }
+
+/* Topbar */
+.topbar { height: 60px; background: var(--ui-surface); border-bottom: 1px solid var(--ui-line); display: flex; align-items: center; padding: 0 22px; gap: 16px; position: relative; z-index: 10; }
+.brand { display: flex; align-items: center; gap: 11px; }
+.brand .mark { width: 28px; height: 28px; color: var(--ui-text-hi); display: block; }
+.brand .mark .core { fill: var(--ui-accent); }
+.brand .names b { font-size: 15px; font-weight: 800; letter-spacing: -.01em; color: var(--ui-text-hi); display: block; line-height: 1.1; }
+.brand .names .sub { color: var(--ui-text-faint); font-size: 11.5px; font-family: var(--mono); letter-spacing: .04em; }
+.ctx-pill { font-family: var(--mono); font-size: 12px; color: var(--ui-text-mute); background: var(--ui-sunken); border: 1px solid var(--ui-line); border-radius: 999px; padding: 5px 13px; display: inline-flex; align-items: center; gap: 8px; }
+.ctx-pill b { color: var(--ui-text-hi); font-weight: 700; }
+.ctx-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-accent); }
+.topbar .spacer { flex: 1; }
+.saved-pill { font-family: var(--mono); font-size: 11.5px; color: var(--ui-text-mute); display: inline-flex; align-items: center; gap: 7px; }
+.saved-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--ui-success); box-shadow: 0 0 0 3px var(--ui-success-tint); }
+.btn { font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: var(--r-sm); padding: 8px 15px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--ui-line); background: var(--ui-surface); color: var(--ui-text-hi); transition: background .14s, border-color .14s, color .14s; }
+.btn:hover { background: var(--ui-raised); border-color: var(--ui-line-strong); }
+.btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.btn-primary { background: var(--ui-accent); border-color: var(--ui-accent); color: #fff; }
+.btn-primary:hover { background: var(--ui-accent-hover); border-color: var(--ui-accent-hover); color: #fff; }
+
+/* Layout */
+.layout { display: grid; grid-template-columns: 392px 1fr 360px; height: calc(100vh - 60px); }
+.panel { overflow-y: auto; }
+.panel-left { background: var(--ui-surface); border-right: 1px solid var(--ui-line); }
+.panel-right { background: var(--ui-surface); border-left: 1px solid var(--ui-line); }
+.panel::-webkit-scrollbar { width: 10px; }
+.panel::-webkit-scrollbar-thumb { background: var(--ui-line); border-radius: 6px; border: 3px solid var(--ui-surface); }
+
+/* Presets */
+.sec { padding: 16px 18px; border-bottom: 1px solid var(--ui-line); }
+.lab { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ui-text-faint); margin-bottom: 11px; display: block; }
+.preset-row { display: flex; gap: 8px; }
+.preset { flex: 1; font: inherit; cursor: pointer; text-align: left; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--ui-line); background: var(--ui-surface); transition: border-color .14s, background .14s; }
+.preset:hover { background: var(--ui-raised); border-color: var(--ui-line-strong); }
+.preset.active { border-color: var(--ui-accent); background: var(--ui-accent-tint); }
+.preset .pn { font-size: 12.5px; font-weight: 700; color: var(--ui-text-hi); display: block; }
+.preset .pd { font-size: 11px; color: var(--ui-text-mute); margin-top: 2px; display: block; line-height: 1.3; }
+
+/* Field editor */
+.fields-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px 6px; }
+.fields-head h3 { font-size: 12.5px; font-weight: 700; color: var(--ui-text-hi); }
+.fields-head .hint { font-family: var(--mono); font-size: 10.5px; color: var(--ui-text-faint); }
+.fields { padding: 6px 14px 18px; display: flex; flex-direction: column; gap: 7px; }
+
+.cell { border: 1px solid var(--ui-line); border-radius: var(--r-md); background: var(--ui-surface); transition: border-color .14s, box-shadow .14s; }
+.cell.composed { border-color: color-mix(in srgb, var(--ui-accent) 40%, var(--ui-line)); }
+.cell.drop-before { box-shadow: 0 -3px 0 -1px var(--ui-accent); }
+.cell.drop-after { box-shadow: 0 3px 0 -1px var(--ui-accent); }
+.cell.dragging { opacity: .45; }
+.cell-main { display: flex; align-items: center; gap: 10px; padding: 9px 11px; }
+.grip { flex: none; width: 22px; height: 30px; display: grid; place-items: center; cursor: grab; color: var(--ui-text-faint); border-radius: 5px; }
+.grip:hover { color: var(--ui-text-mute); background: var(--ui-raised); }
+.grip:active { cursor: grabbing; }
+.grip svg { width: 15px; height: 15px; }
+.ficon { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--ui-sunken); border: 1px solid var(--ui-line); color: var(--ui-text-mute); }
+.ficon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.fmeta { flex: 1; min-width: 0; }
+.fmeta .fn { font-size: 13.5px; font-weight: 600; color: var(--ui-text-hi); letter-spacing: -.01em; display: flex; align-items: center; gap: 7px; }
+.fmeta .ft { font-family: var(--mono); font-size: 10.5px; color: var(--ui-text-faint); text-transform: uppercase; letter-spacing: .04em; }
+.cbadge { font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ui-accent); background: var(--ui-accent-tint); border: 1px solid color-mix(in srgb, var(--ui-accent) 30%, transparent); border-radius: 999px; padding: 1px 7px; }
+
+.arrows { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.arrows button { width: 22px; height: 15px; display: grid; place-items: center; border: 1px solid var(--ui-line); background: var(--ui-surface); border-radius: 4px; cursor: pointer; color: var(--ui-text-mute); }
+.arrows button:hover:not(:disabled) { background: var(--ui-raised); color: var(--ui-text-hi); border-color: var(--ui-line-strong); }
+.arrows button:disabled { opacity: .35; cursor: not-allowed; }
+.arrows svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+
+.rolesel { position: relative; flex: none; }
+.rolesel select { font: inherit; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; appearance: none; cursor: pointer; padding: 6px 24px 6px 10px; border-radius: 6px; border: 1px solid var(--ui-line); background: var(--ui-sunken); color: var(--ui-text-hi); }
+.rolesel select:focus { outline: none; border-color: var(--ui-accent); }
+.rolesel.r-primary select { color: var(--ui-text-hi); }
+.rolesel.r-secondary select { color: var(--ui-text-mute); }
+.rolesel.r-detail select { color: var(--ui-text-faint); }
+.rolesel.r-hidden select { color: var(--ui-text-faint); text-decoration: line-through; }
+.rolesel svg { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; pointer-events: none; stroke: var(--ui-text-mute); fill: none; stroke-width: 2; }
+
+.cell-foot { display: flex; align-items: center; gap: 8px; padding: 0 11px 10px 49px; flex-wrap: wrap; }
+.minibtn { font: inherit; font-size: 11px; font-weight: 600; font-family: var(--mono); cursor: pointer; padding: 4px 9px; border-radius: 5px; border: 1px solid var(--ui-line); background: var(--ui-surface); color: var(--ui-text-mute); display: inline-flex; align-items: center; gap: 5px; transition: .14s; }
+.minibtn:hover { color: var(--ui-text-hi); border-color: var(--ui-line-strong); background: var(--ui-raised); }
+.minibtn:disabled { opacity: .4; cursor: not-allowed; }
+.minibtn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.minibtn.accent { color: var(--ui-accent); border-color: color-mix(in srgb, var(--ui-accent) 30%, transparent); background: var(--ui-accent-tint); }
+.stylesel { margin-left: auto; display: inline-flex; gap: 0; border: 1px solid var(--ui-line); border-radius: 6px; overflow: hidden; }
+.stylesel button { font: inherit; font-size: 10.5px; font-weight: 600; font-family: var(--mono); cursor: pointer; padding: 4px 9px; border: none; background: var(--ui-surface); color: var(--ui-text-mute); border-left: 1px solid var(--ui-line); }
+.stylesel button:first-child { border-left: none; }
+.stylesel button.on { background: var(--ui-accent); color: #fff; }
+.members { padding: 0 11px 9px 49px; }
+.member { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ui-text-mute); padding: 3px 0; }
+.member .lead-tag { font-family: var(--mono); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--ui-accent); }
+.member .mdot { width: 4px; height: 4px; border-radius: 50%; background: var(--ui-line-strong); }
+.member .mft { font-family: var(--mono); font-size: 10px; color: var(--ui-text-faint); }
+
+/* Center stage */
+.stage { background: var(--ui-bg); padding: 22px 26px; overflow-y: auto; background-image: radial-gradient(var(--ui-dot) 1px, transparent 1px); background-size: 22px 22px; }
+.stage-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+.modes { display: inline-flex; border: 1px solid var(--ui-line); border-radius: var(--r-sm); overflow: hidden; background: var(--ui-surface); }
+.modes button { font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 8px 16px; border: none; background: transparent; color: var(--ui-text-mute); border-left: 1px solid var(--ui-line); display: inline-flex; align-items: center; gap: 7px; }
+.modes button:first-child { border-left: none; }
+.modes button.on { background: var(--ui-accent); color: #fff; }
+.modes svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.stage-cap { font-family: var(--mono); font-size: 11px; color: var(--ui-text-faint); }
+.stage-cap b { color: var(--ui-text-mute); font-weight: 600; }
+
+.render { background: var(--ui-surface); border: 1px solid var(--ui-line); border-radius: 14px; box-shadow: var(--shadow-lg); overflow: hidden; }
+.render-h { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--ui-line); }
+.render-h .rt { font-size: 16px; font-weight: 800; color: var(--ui-text-hi); letter-spacing: -.01em; }
+.render-h .rc { font-family: var(--mono); font-size: 11px; color: var(--ui-text-faint); }
+
+/* List */
+table.rv { width: 100%; border-collapse: collapse; }
+table.rv th { text-align: left; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ui-text-faint); padding: 11px 20px; border-bottom: 1px solid var(--ui-line); font-weight: 600; background: var(--ui-sunken); }
+table.rv td { padding: 12px 20px; border-bottom: 1px solid var(--ui-line); vertical-align: middle; }
+table.rv tr:last-child td { border-bottom: none; }
+table.rv tr:hover td { background: var(--ui-bg); }
+.v-primary { font-size: 14px; font-weight: 700; color: var(--ui-text-hi); letter-spacing: -.01em; }
+.v-secondary { font-size: 13px; color: var(--ui-text-mute); }
+.cstack .lead { font-size: 14px; font-weight: 700; color: var(--ui-text-hi); display: block; }
+.cstack .trail { font-size: 12px; color: var(--ui-text-faint); display: block; margin-top: 1px; }
+.cinline { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.cinline .lead { font-size: 14px; font-weight: 700; color: var(--ui-text-hi); }
+.cinline .ti { font-size: 12px; color: var(--ui-text-mute); display: inline-flex; align-items: center; gap: 4px; }
+.cinline .ti svg { width: 12px; height: 12px; fill: none; stroke: var(--ui-text-faint); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.cbadges { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.cbadges .lead { font-size: 14px; font-weight: 700; color: var(--ui-text-hi); }
+.pill { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--ui-line); color: var(--ui-text-mute); background: var(--ui-bg); display: inline-flex; align-items: center; gap: 5px; }
+.pill.s-done { color: var(--ui-success); border-color: color-mix(in srgb, var(--ui-success) 36%, transparent); }
+.pill.s-done::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ui-success); }
+.pill.s-scheduled { color: var(--ui-accent); border-color: color-mix(in srgb, var(--ui-accent) 36%, transparent); }
+.pill.s-scheduled::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ui-accent); }
+.pill.s-en-route { color: var(--ui-warning); border-color: color-mix(in srgb, var(--ui-warning) 40%, transparent); }
+.pill.s-en-route::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ui-warning); }
+.pill.s-cancelled { color: var(--ui-danger); border-color: color-mix(in srgb, var(--ui-danger) 36%, transparent); }
+.pill.s-cancelled::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ui-danger); }
+.fold-note { padding: 11px 20px; font-family: var(--mono); font-size: 11px; color: var(--ui-text-faint); background: var(--ui-bg); border-top: 1px solid var(--ui-line); }
+.fold-note b { color: var(--ui-text-mute); font-weight: 600; }
+
+/* Cards */
+.cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; padding: 18px; }
+.rcard { border: 1px solid var(--ui-line); border-radius: var(--r-md); background: var(--ui-surface); padding: 16px; box-shadow: var(--shadow-sm); }
+.rcard-h { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; }
+.avatar { width: 38px; height: 38px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: var(--ui-accent); background: var(--ui-accent-tint); border: 1px solid color-mix(in srgb, var(--ui-accent) 22%, transparent); }
+.rcard-h .title { font-size: 15px; font-weight: 700; color: var(--ui-text-hi); letter-spacing: -.01em; }
+.rcard-h .sub { font-size: 12px; color: var(--ui-text-faint); margin-top: 1px; }
+.irow { display: flex; align-items: center; gap: 9px; padding: 4px 0; font-size: 13px; color: var(--ui-text-mute); }
+.irow svg { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--ui-text-faint); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.rcard-foot { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ui-line); display: flex; gap: 7px; flex-wrap: wrap; }
+
+/* Gallery */
+.gallery { display: flex; flex-direction: column; }
+.grow { display: flex; align-items: center; gap: 14px; padding: 13px 20px; border-bottom: 1px solid var(--ui-line); }
+.grow:last-child { border-bottom: none; }
+.grow:hover { background: var(--ui-bg); }
+.grow .gmeta { flex: 1; min-width: 0; }
+.grow .gtop { font-size: 14px; font-weight: 700; color: var(--ui-text-hi); letter-spacing: -.01em; }
+.grow .gsub { font-size: 12.5px; color: var(--ui-text-mute); margin-top: 1px; }
+
+/* Right panel */
+.right-sec { border-bottom: 1px solid var(--ui-line); padding: 18px; }
+.right-sec .h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+.right-sec h4 { font-size: 12.5px; font-weight: 700; color: var(--ui-text-hi); }
+.right-sec .hint { font-family: var(--mono); font-size: 10.5px; color: var(--ui-text-faint); }
+.legend { display: flex; flex-direction: column; gap: 9px; }
+.lrow { display: flex; align-items: center; gap: 11px; font-size: 12.5px; }
+.lrow .sw { width: 26px; height: 16px; border-radius: 4px; flex: none; border: 1px solid var(--ui-line); }
+.lrow .nm { color: var(--ui-text-hi); font-weight: 600; }
+.lrow .ds { color: var(--ui-text-faint); font-size: 11.5px; }
+.copy-btn { font: inherit; font-size: 11px; font-family: var(--mono); color: var(--ui-text-mute); background: var(--ui-surface); border: 1px solid var(--ui-line); padding: 5px 10px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: .14s; }
+.copy-btn:hover { color: var(--ui-text-hi); border-color: var(--ui-line-strong); }
+.copy-btn.done { color: var(--ui-success); border-color: color-mix(in srgb, var(--ui-success) 40%, transparent); }
+.copy-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.code { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; color: var(--ui-text); background: var(--ui-sunken); border: 1px solid var(--ui-line); border-radius: var(--r-md); padding: 14px; white-space: pre; overflow-x: auto; }
+.code .c-cm { color: var(--ui-text-faint); }
+.code .c-key { color: var(--ui-text-hi); }
+.code .c-pri { color: var(--ui-accent); font-weight: 700; }
+.code .c-sec { color: var(--ui-text-mute); }
+.code .c-det { color: var(--ui-text-faint); }
+.code .c-hid { color: var(--ui-text-faint); }
+.code .c-op { color: var(--ui-text-faint); }
+.flow { font-family: var(--mono); font-size: 10.5px; line-height: 1.6; color: var(--ui-text-faint); white-space: pre-wrap; }
+.flow b { color: var(--ui-text-mute); font-weight: 600; }
+.flow .ac { color: var(--ui-accent); font-weight: 600; }
+
+.toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ui-surface); border: 1px solid var(--ui-line); color: var(--ui-text-hi); padding: 14px 20px; border-radius: var(--r-md); font-size: 13.5px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow-lg); opacity: 0; pointer-events: none; transition: .3s; z-index: 50; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.err .check { background: var(--ui-danger); }
+.toast .check { width: 22px; height: 22px; border-radius: 50%; background: var(--ui-success); color: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }
+.toast b { font-weight: 700; } .toast small { display: block; color: var(--ui-text-faint); font-size: 11px; font-family: var(--mono); margin-top: 1px; }
+
+@media (max-width: 1240px) { .layout { grid-template-columns: 360px 1fr 320px; } .cards { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true">
+      <svg width="28" height="28" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="13" stroke="currentColor" stroke-width="2.5"/><circle class="core" cx="16" cy="16" r="5.4"/></svg>
+    </span>
+    <div class="names"><b>Adaptive View</b><span class="sub">LAYOUT EDITOR</span></div>
+  </div>
+  <span class="ctx-pill"><i></i> table <b id="ctxTable">bookings</b> · project <b id="ctxProject">salon</b></span>
+  <div class="spacer"></div>
+  <span class="saved-pill"><i></i> <span id="savedLabel">no spec yet · draft</span></span>
+  <button class="btn" id="resetBtn"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg> Reset</button>
+  <button class="btn btn-primary" id="publishBtn"><svg viewBox="0 0 24 24"><path d="M12 19V6"/><path d="m5 12 7-7 7 7"/></svg> Publish spec</button>
+</div>
+
+<div class="layout">
+  <div class="panel panel-left">
+    <div class="sec">
+      <span class="lab">Schema · same renderer, different table</span>
+      <div class="preset-row" id="presetRow"></div>
+    </div>
+    <div class="fields-head">
+      <h3>Fields</h3>
+      <button class="minibtn" id="reinferBtn" title="Re-run inference over the schema">re-infer</button>
+    </div>
+    <div class="fields" id="fields"></div>
+  </div>
+
+  <div class="panel stage">
+    <div class="stage-bar">
+      <div class="modes" id="modes">
+        <button data-mode="list"><svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg> List</button>
+        <button data-mode="cards"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Cards</button>
+        <button data-mode="gallery"><svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="3"/><line x1="12" y1="6" x2="21" y2="6"/><line x1="12" y1="9" x2="18" y2="9"/><circle cx="6" cy="17" r="3"/><line x1="12" y1="16" x2="21" y2="16"/><line x1="12" y1="19" x2="18" y2="19"/></svg> Gallery</button>
+      </div>
+      <span class="stage-cap">end user sees this · <b id="capMode">list · default</b></span>
+    </div>
+    <div class="render">
+      <div class="render-h"><span class="rt" id="renderTitle">Bookings</span><span class="rc" id="renderCount"></span></div>
+      <div id="renderBody"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-right">
+    <div class="right-sec">
+      <div class="h"><h4>Importance ramp</h4><span class="hint">grey = weight · blue = action</span></div>
+      <div class="legend">
+        <div class="lrow"><span class="sw" style="background:var(--ui-text-hi)"></span><span class="nm">Primary</span><span class="ds">leads · bold · darkest</span></div>
+        <div class="lrow"><span class="sw" style="background:var(--ui-text-mute)"></span><span class="nm">Secondary</span><span class="ds">supporting · mid grey</span></div>
+        <div class="lrow"><span class="sw" style="background:var(--ui-text-faint)"></span><span class="nm">Detail</span><span class="ds">detail screen only</span></div>
+        <div class="lrow"><span class="sw" style="background:var(--ui-sunken);border-color:var(--ui-line-strong)"></span><span class="nm">Hidden</span><span class="ds">never shown</span></div>
+        <div class="lrow"><span class="sw" style="background:var(--ui-accent)"></span><span class="nm">Composed</span><span class="ds">merged · the one accent</span></div>
+      </div>
+    </div>
+    <div class="right-sec">
+      <div class="h"><h4>view-spec</h4><button class="copy-btn" id="copyBtn"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button></div>
+      <div class="code" id="code"></div>
+    </div>
+    <div class="right-sec">
+      <div class="h"><h4>Pipeline</h4></div>
+      <div class="flow"><b>BUILD TIME</b> schema → inference → <span class="ac">this editor</span> → spec file
+<b>RUNTIME</b> spec file → renderer → { list · cards · gallery }
+
+the AI proposes once · <b>you</b> decide · the system executes a frozen file. fast. deterministic.</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="check">✓</span><div><b id="toastTitle"></b><small id="toastDetail"></small></div></div>
+
+<script>
+"use strict";
+// ============================================================
+//  Icons — inner SVG of a 24×24 thin-line glyph, keyed by glyph name.
+// ============================================================
+const ICONS = {
+  text: '<path d="M4 7V5h16v2"></path><path d="M9 19h6"></path><path d="M12 5v14"></path>',
+  email: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 7 9 6 9-6"></path>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"></path>',
+  location: '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>',
+  enum: '<path d="M20.6 13.4 11 3.8a2 2 0 0 0-1.4-.6H4a1 1 0 0 0-1 1v5.6a2 2 0 0 0 .6 1.4l9.6 9.6a2 2 0 0 0 2.8 0l4.6-4.6a2 2 0 0 0 0-2.8z"></path><circle cx="7.5" cy="7.5" r="1"></circle>',
+  timestamp: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>',
+  user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>',
+  uuid: '<path d="M4 9h16M4 15h16M10 4 8 20M16 4l-2 16"></path>',
+  number: '<path d="M4 9h16M4 15h16M10 4 8 20M16 4l-2 16"></path>'
+};
+const TYPE_ICON = { text:"text", email:"email", phone:"phone", enum:"enum", timestamp:"timestamp", user:"user", uuid:"uuid", location:"location", number:"number", boolean:"enum" };
+function svg(name) { return '<svg viewBox="0 0 24 24">' + (ICONS[name] || ICONS.text) + '</svg>'; }
+
+// ============================================================
+//  Schemas — the "what the data is" input layer. One per project.
+//  Drop a new object in here to point the editor at another table.
+// ============================================================
+const SCHEMAS = {
+  "salon": {
+    project: "salon", table: "bookings",
+    columns: [
+      { name: "booked_at", type: "timestamp" }, { name: "customer", type: "text" },
+      { name: "phone", type: "phone" }, { name: "status", type: "enum" },
+      { name: "address", type: "location" }, { name: "assigned_to", type: "user" },
+      { name: "notes", type: "text" }, { name: "id", type: "uuid" }, { name: "internal_uuid", type: "uuid" }
+    ],
+    sample: [
+      { booked_at:"14:30", customer:"Layla Hassan", phone:"+46 70 123 45", status:"scheduled", address:"Storgatan 4", assigned_to:"Nour", notes:"Colour + cut", id:"a1f…", internal_uuid:"9e2…" },
+      { booked_at:"15:15", customer:"Omar Khalil", phone:"+46 73 555 02", status:"done", address:"Vasagatan 12", assigned_to:"Sara", notes:"Beard trim", id:"b3c…", internal_uuid:"7d1…" },
+      { booked_at:"16:00", customer:"Sara Nasr", phone:"+46 76 884 21", status:"cancelled", address:"Kungsgatan 8", assigned_to:"Nour", notes:"No-show", id:"c5e…", internal_uuid:"4a8…" },
+      { booked_at:"16:45", customer:"Erik Lund", phone:"+46 70 991 33", status:"scheduled", address:"Odengatan 2", assigned_to:"Mira", notes:"Consultation", id:"d7a…", internal_uuid:"2b6…" }
+    ],
+    suggested: { mode:"list", layout: [
+      { members:["booked_at"], role:"primary", style:"stacked" },
+      { members:["customer","phone"], role:"secondary", style:"stacked" },
+      { members:["status"], role:"secondary", style:"badge" },
+      { members:["assigned_to"], role:"secondary", style:"stacked" },
+      { members:["address"], role:"detail", style:"stacked" },
+      { members:["notes"], role:"detail", style:"stacked" },
+      { members:["id"], role:"hidden", style:"stacked" },
+      { members:["internal_uuid"], role:"hidden", style:"stacked" }
+    ]}
+  },
+  "waste-ops": {
+    project: "waste-ops", table: "bookings",
+    columns: [
+      { name:"status", type:"enum" }, { name:"site", type:"location" }, { name:"client", type:"text" },
+      { name:"driver", type:"user" }, { name:"phone", type:"phone" }, { name:"pickup_at", type:"timestamp" },
+      { name:"container_id", type:"text" }, { name:"fill_pct", type:"number" }, { name:"notes", type:"text" }, { name:"id", type:"uuid" }
+    ],
+    sample: [
+      { status:"en-route", site:"Hamngatan 22", client:"ICA Maxi", driver:"Jonas", phone:"+46 70 220 11", pickup_at:"08:10", container_id:"C-118", fill_pct:"92%", notes:"Rear lot", id:"f12…" },
+      { status:"scheduled", site:"Lagervägen 6", client:"Bygma", driver:"Petra", phone:"+46 73 044 87", pickup_at:"09:30", container_id:"C-204", fill_pct:"65%", notes:"Gate code 4471", id:"a93…" },
+      { status:"done", site:"Frihamnen 3", client:"Stena", driver:"Jonas", phone:"+46 76 551 09", pickup_at:"10:05", container_id:"C-077", fill_pct:"100%", notes:"Overflow", id:"b41…" },
+      { status:"cancelled", site:"Torsgatan 18", client:"Coop", driver:"Mira", phone:"+46 70 778 32", pickup_at:"11:20", container_id:"C-150", fill_pct:"30%", notes:"Client postponed", id:"c08…" }
+    ],
+    suggested: { mode:"list", layout: [
+      { members:["status"], role:"primary", style:"badge" },
+      { members:["site"], role:"secondary", style:"stacked" },
+      { members:["client"], role:"secondary", style:"stacked" },
+      { members:["driver","phone"], role:"secondary", style:"inline" },
+      { members:["pickup_at"], role:"detail", style:"stacked" },
+      { members:["container_id","fill_pct"], role:"detail", style:"stacked" },
+      { members:["notes"], role:"detail", style:"stacked" },
+      { members:["id"], role:"hidden", style:"stacked" }
+    ]}
+  },
+  "clinic": {
+    project: "clinic", table: "bookings",
+    columns: [
+      { name:"patient", type:"text" }, { name:"phone", type:"phone" }, { name:"scheduled_at", type:"timestamp" },
+      { name:"room", type:"text" }, { name:"practitioner", type:"user" }, { name:"status", type:"enum" },
+      { name:"treatment", type:"text" }, { name:"notes", type:"text" }, { name:"id", type:"uuid" }
+    ],
+    sample: [
+      { patient:"Amir Said", phone:"+46 70 412 90", scheduled_at:"09:00", room:"Room 2", practitioner:"Dr. Holm", status:"scheduled", treatment:"Cleaning", notes:"First visit", id:"e21…" },
+      { patient:"Nadia Aziz", phone:"+46 73 880 14", scheduled_at:"09:45", room:"Room 1", practitioner:"Dr. Vinter", status:"done", treatment:"Filling", notes:"Follow-up in 6m", id:"f55…" },
+      { patient:"Tomas Berg", phone:"+46 76 233 71", scheduled_at:"10:30", room:"Room 3", practitioner:"Dr. Holm", status:"cancelled", treatment:"Extraction", notes:"Rescheduling", id:"a72…" },
+      { patient:"Lina Park", phone:"+46 70 119 58", scheduled_at:"11:15", room:"Room 2", practitioner:"Dr. Vinter", status:"scheduled", treatment:"Whitening", notes:"Consult", id:"b90…" }
+    ],
+    suggested: { mode:"cards", layout: [
+      { members:["patient","phone"], role:"primary", style:"stacked" },
+      { members:["scheduled_at"], role:"secondary", style:"stacked" },
+      { members:["practitioner"], role:"secondary", style:"stacked" },
+      { members:["room"], role:"secondary", style:"stacked" },
+      { members:["status"], role:"secondary", style:"badge" },
+      { members:["treatment"], role:"detail", style:"stacked" },
+      { members:["notes"], role:"detail", style:"stacked" },
+      { members:["id"], role:"hidden", style:"stacked" }
+    ]}
+  }
+};
+const PROJECTS = [
+  { project:"salon", table:"bookings", label:"Salon", desc:"leads with time" },
+  { project:"waste-ops", table:"bookings", label:"Container Ops", desc:"leads with status + site" },
+  { project:"clinic", table:"bookings", label:"Clinic", desc:"patient-led card grid" }
+];
+
+// ============================================================
+//  Inference — schema → inference → editor.
+// ============================================================
+function buildFields(columns) {
+  const map = {};
+  columns.forEach(c => { map[c.name] = { name:c.name, label:c.label || c.name, type:c.type, icon: TYPE_ICON[c.type] || "text" }; });
+  return map;
+}
+function inferLayout(columns) {
+  const cells = columns.map(c => ({ members:[c.name], role:"secondary", style: c.type === "enum" ? "badge" : "stacked" }));
+  cells.forEach((cell, i) => { if (columns[i].type === "uuid") cell.role = "hidden"; });
+  const visible = i => cells[i].role !== "hidden";
+  const firstOf = t => columns.findIndex((c, i) => c.type === t && visible(i));
+  let primaryIdx = firstOf("timestamp");
+  if (primaryIdx < 0) primaryIdx = firstOf("text");
+  if (primaryIdx < 0) primaryIdx = cells.findIndex((_, i) => visible(i));
+  if (primaryIdx >= 0) { cells[primaryIdx].role = "primary"; cells[primaryIdx].style = "stacked"; }
+  let kept = 0;
+  cells.forEach(cell => {
+    if (cell.role === "hidden") return;
+    if (cell.role === "primary") { kept++; return; }
+    if (kept >= 4) cell.role = "detail"; else kept++;
+  });
+  return { mode:"list", layout: cells };
+}
+
+// ============================================================
+//  State
+// ============================================================
+let uid = 1;
+const nextId = () => uid++;
+const state = { project:null, table:null, schema:null, fields:{}, records:[], mode:"list", cells:[] };
+
+function fromSchema(schema) {
+  const fields = buildFields(schema.columns);
+  const suggested = schema.suggested || inferLayout(schema.columns);
+  const cells = suggested.layout
+    .map(c => ({ members: c.members.filter(m => fields[m]), role: c.role, style: c.style }))
+    .filter(c => c.members.length > 0)
+    .map(c => ({ id: nextId(), members: c.members.slice(), role: c.role, style: c.style }));
+  return { fields, mode: suggested.mode, cells };
+}
+
+function loadProject(project, table) {
+  const schema = SCHEMAS[project];
+  if (!schema) return;
+  state.project = project; state.table = table; state.schema = schema;
+  state.records = schema.sample;
+  const built = fromSchema(schema);
+  state.fields = built.fields; state.mode = built.mode; state.cells = built.cells;
+  renderAll(); refreshSaved();
+}
+function reinfer() {
+  const built = fromSchema(Object.assign({}, state.schema, { suggested: inferLayout(state.schema.columns) }));
+  state.mode = built.mode; state.cells = built.cells;
+  renderAll();
+}
+function reset() { loadProject(state.project, state.table); }
+
+// ============================================================
+//  Rendering
+// ============================================================
+const $ = id => document.getElementById(id);
+const F = () => state.fields;
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const val = (rec, k) => rec[k] != null ? rec[k] : "";
+const initials = s => String(s).split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+function renderAll() {
+  $("ctxProject").textContent = state.project;
+  $("ctxTable").textContent = state.table;
+  $("renderTitle").textContent = cap(state.table);
+  renderPresets(); renderFields(); renderPreview(); renderSpec();
+}
+
+function renderPresets() {
+  $("presetRow").innerHTML = PROJECTS.map(p =>
+    '<button class="preset' + (p.project === state.project ? ' active' : '') + '" data-project="' + p.project + '" data-table="' + p.table + '">' +
+    '<span class="pn">' + esc(p.label) + '</span><span class="pd">' + esc(p.desc) + '</span></button>'
+  ).join("");
+}
+
+function renderFields() {
+  const f = F();
+  const upArrow = '<svg viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>';
+  const dnArrow = '<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
+  const gripSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>';
+  const chevSvg = '<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
+  const mergeSvg = '<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+  const unmergeSvg = '<svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+  const ROLES = [["primary","Primary"],["secondary","Secondary"],["detail","Detail"],["hidden","Hidden"]];
+  const STYLES = [["stacked","Stack"],["inline","Inline"],["badge","Badge"]];
+
+  $("fields").innerHTML = state.cells.map((cell, i) => {
+    const lead = cell.members[0];
+    const composed = cell.members.length > 1;
+    const roleOpts = ROLES.map(([v, l]) => '<option value="' + v + '"' + (cell.role === v ? ' selected' : '') + '>' + l + '</option>').join("");
+    const membersHtml = composed ? '<div class="members">' + cell.members.map((m, mi) =>
+      '<div class="member">' + (mi === 0 ? '<span class="lead-tag">lead</span>' : '<span class="mdot"></span>') +
+      ' ' + esc(f[m].label) + ' <span class="mft">' + esc(f[m].type) + '</span></div>').join("") + '</div>' : '';
+    const styleSel = composed ? '<span class="stylesel">' + STYLES.map(([v, l]) =>
+      '<button data-style="' + v + '" class="' + (cell.style === v ? 'on' : '') + '">' + l + '</button>').join("") + '</span>' : '';
+    const mergeBtn = i < state.cells.length - 1 ? '<button class="minibtn" data-act="merge">' + mergeSvg + ' merge ↓</button>' : '';
+    const unmergeBtn = composed ? '<button class="minibtn accent" data-act="unmerge">' + unmergeSvg + ' unmerge</button>' : '';
+
+    return '<div class="cell' + (composed ? ' composed' : '') + '" draggable="true" data-i="' + i + '">' +
+      '<div class="cell-main">' +
+        '<span class="grip" title="Drag to reorder">' + gripSvg + '</span>' +
+        '<span class="ficon">' + svg(f[lead].icon) + '</span>' +
+        '<div class="fmeta"><span class="fn">' + esc(f[lead].label) +
+          (composed ? ' <span class="cbadge">+' + (cell.members.length - 1) + ' composed</span>' : '') +
+          '</span><span class="ft">' + esc(f[lead].type) + '</span></div>' +
+        '<div class="arrows">' +
+          '<button data-act="up"' + (i === 0 ? ' disabled' : '') + '>' + upArrow + '</button>' +
+          '<button data-act="down"' + (i === state.cells.length - 1 ? ' disabled' : '') + '>' + dnArrow + '</button>' +
+        '</div>' +
+        '<span class="rolesel r-' + cell.role + '"><select data-act="role">' + roleOpts + '</select>' + chevSvg + '</span>' +
+      '</div>' + membersHtml +
+      '<div class="cell-foot">' + mergeBtn + unmergeBtn + styleSel + '</div>' +
+    '</div>';
+  }).join("");
+
+  wireFieldEvents();
+}
+
+function cellContent(cell, rec, ctx) {
+  const f = F();
+  const lead = cell.members[0];
+  if (cell.members.length === 1) {
+    if (f[lead].type === "enum") return '<span class="pill s-' + esc(val(rec, lead)) + '">' + esc(val(rec, lead)) + '</span>';
+    return '<span class="' + (ctx === "primary" ? "v-primary" : "v-secondary") + '">' + esc(val(rec, lead)) + '</span>';
+  }
+  const trail = cell.members.slice(1);
+  if (cell.style === "badge") {
+    return '<span class="cbadges"><span class="lead">' + esc(val(rec, lead)) + '</span>' +
+      trail.map(m => f[m].type === "enum"
+        ? '<span class="pill s-' + esc(val(rec, m)) + '">' + esc(val(rec, m)) + '</span>'
+        : '<span class="pill">' + esc(val(rec, m)) + '</span>').join("") + '</span>';
+  }
+  if (cell.style === "inline") {
+    return '<span class="cinline"><span class="lead">' + esc(val(rec, lead)) + '</span>' +
+      trail.map(m => '<span class="ti">' + svg(f[m].icon) + esc(val(rec, m)) + '</span>').join("") + '</span>';
+  }
+  return '<span class="cstack"><span class="lead">' + esc(val(rec, lead)) + '</span>' +
+    trail.map(m => '<span class="trail">' + esc(val(rec, m)) + '</span>').join("") + '</span>';
+}
+
+function foldNote(folded, hidden) {
+  const f = F();
+  if (!folded.length && !hidden.length) return "";
+  const fl = folded.flatMap(c => c.members).map(m => f[m].label);
+  const hl = hidden.flatMap(c => c.members).map(m => f[m].label);
+  let out = "";
+  if (fl.length) out += '<b>' + esc(fl.join(", ")) + '</b> on detail screen';
+  if (fl.length && hl.length) out += ' · ';
+  if (hl.length) out += esc(hl.join(", ")) + ' hidden';
+  return '<div class="fold-note">' + out + '</div>';
+}
+
+function renderPreview() {
+  const f = F();
+  const cells = state.cells, recs = state.records;
+  const visible = cells.filter(c => c.role === "primary" || c.role === "secondary");
+  const folded = cells.filter(c => c.role === "detail");
+  const hidden = cells.filter(c => c.role === "hidden");
+  let html = "";
+
+  if (state.mode === "list") {
+    const cols = visible.length ? visible : cells.slice(0, 1);
+    html = '<table class="rv"><thead><tr>' + cols.map(c => '<th>' + esc(f[c.members[0]].label) + '</th>').join("") + '</tr></thead><tbody>' +
+      recs.map(rec => '<tr>' + cols.map(c => '<td>' + cellContent(c, rec, c.role) + '</td>').join("") + '</tr>').join("") +
+      '</tbody></table>' + foldNote(folded, hidden);
+  } else if (state.mode === "cards") {
+    const prim = visible.find(c => c.role === "primary") || visible[0] || cells[0];
+    const secs = visible.filter(c => c !== prim);
+    html = '<div class="cards">' + recs.map(rec => {
+      const titleField = prim.members[0];
+      const badges = secs.filter(c => c.style === "badge" || f[c.members[0]].type === "enum");
+      const rows = secs.filter(c => !(c.style === "badge" || f[c.members[0]].type === "enum"));
+      return '<div class="rcard"><div class="rcard-h"><span class="avatar">' + esc(initials(val(rec, titleField))) + '</span>' +
+        '<div><div class="title">' + esc(val(rec, titleField)) + '</div>' +
+        (prim.members.length > 1 ? '<div class="sub">' + esc(prim.members.slice(1).map(m => val(rec, m)).join(" · ")) + '</div>' : '') +
+        '</div></div>' +
+        rows.map(c => '<div class="irow">' + svg(f[c.members[0]].icon) + ' ' + esc(c.members.map(m => val(rec, m)).join(" · ")) + '</div>').join("") +
+        (badges.length ? '<div class="rcard-foot">' + badges.map(c => cellContent(c, rec, "secondary")).join("") + '</div>' : '') +
+        '</div>';
+    }).join("") + '</div>' + foldNote(folded, hidden);
+  } else {
+    const prim = visible.find(c => c.role === "primary") || visible[0] || cells[0];
+    const secs = visible.filter(c => c !== prim);
+    const badge = secs.find(c => c.style === "badge" || f[c.members[0]].type === "enum");
+    const subs = secs.filter(c => c !== badge);
+    html = '<div class="gallery">' + recs.map(rec =>
+      '<div class="grow"><span class="avatar">' + esc(initials(val(rec, prim.members[0]))) + '</span>' +
+      '<div class="gmeta"><div class="gtop">' + esc(prim.members.map(m => val(rec, m)).join(" · ")) + '</div>' +
+      '<div class="gsub">' + esc(subs.slice(0, 2).map(c => c.members.map(m => val(rec, m)).join(" · ")).join("  ·  ")) + '</div></div>' +
+      (badge ? cellContent(badge, rec, "secondary") : "") + '</div>').join("") + '</div>' + foldNote(folded, hidden);
+  }
+
+  $("renderBody").innerHTML = html;
+  $("renderCount").textContent = recs.length + " records · " + state.mode;
+  $("capMode").textContent = state.mode + " · default";
+  document.querySelectorAll("#modes button").forEach(b => b.classList.toggle("on", b.dataset.mode === state.mode));
+}
+
+// view-spec generation + highlight
+function pad(s) { return (s + " ".repeat(20)).slice(0, Math.max(20, s.length + 1)); }
+function specText() {
+  const f = F();
+  const L = [];
+  L.push("# " + state.table + " — view spec  (" + state.project + ")");
+  L.push("# build-time source of truth · renderer reads this at runtime");
+  L.push("");
+  L.push("view_modes     = [list, cards, gallery]");
+  L.push("default        = " + state.mode);
+  L.push("runtime_switch = on");
+  L.push("");
+  L.push("# field             role        (compose)");
+  state.cells.forEach(cell => {
+    const lead = cell.members[0];
+    if (cell.members.length > 1) {
+      L.push(pad(cell.members.map(m => f[m].label).join(" + ")) + "=> " + cell.role + "    (compose: " + cell.style + ")");
+    } else {
+      L.push(pad(f[lead].label) + "=> " + cell.role + (f[lead].type === "enum" ? "    (badge)" : ""));
+    }
+  });
+  return L.join("\n");
+}
+function highlight(txt) {
+  return txt.split("\n").map(line => {
+    if (line.trim().startsWith("#")) return '<span class="c-cm">' + esc(line) + '</span>';
+    const m = line.match(/^(.*?)(=>\s*)(\w+)(.*)$/);
+    if (m) {
+      const cls = ({ primary:"c-pri", secondary:"c-sec", detail:"c-det", hidden:"c-hid" })[m[3]] || "c-key";
+      return '<span class="c-key">' + esc(m[1]) + '</span><span class="c-op">' + esc(m[2]) + '</span><span class="' + cls + '">' + esc(m[3]) + '</span><span class="c-op">' + esc(m[4]) + '</span>';
+    }
+    const eq = line.indexOf("=");
+    if (eq > 0) return '<span class="c-key">' + esc(line.slice(0, eq)) + '</span><span class="c-op">=</span><span class="c-sec">' + esc(line.slice(eq + 1)) + '</span>';
+    return esc(line);
+  }).join("\n");
+}
+function renderSpec() { $("code").innerHTML = highlight(specText()); }
+
+// ============================================================
+//  Persistence — Publish writes a real, versioned .toml file
+//  (browser download) and remembers versions in localStorage.
+// ============================================================
+const specKey = () => "viewspec:" + state.project + ":" + state.table;
+function refreshSaved() {
+  let prev = null;
+  try { prev = JSON.parse(localStorage.getItem(specKey()) || "null"); } catch (e) {}
+  $("savedLabel").textContent = prev ? "spec saved · v" + prev.version : "no spec yet · draft";
+}
+function publish() {
+  let prev = null;
+  try { prev = JSON.parse(localStorage.getItem(specKey()) || "null"); } catch (e) {}
+  const version = (prev && prev.version ? prev.version : 0) + 1;
+  const updatedAt = new Date().toISOString();
+  const stamped = "# version " + version + " · committed " + updatedAt + "\n" + specText() + "\n";
+  try { localStorage.setItem(specKey(), JSON.stringify({ version, updatedAt, toml: stamped })); } catch (e) {}
+  const fname = state.table + ".view.toml";
+  const blob = new Blob([stamped], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = fname; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(a.href);
+  $("savedLabel").textContent = "spec saved · v" + version;
+  toast(false, "Spec published", state.project + "/" + fname + " · committed v" + version + " · downloaded");
+}
+
+// ============================================================
+//  Toast
+// ============================================================
+let toastTimer;
+function toast(isErr, title, detail) {
+  const t = $("toast");
+  t.classList.toggle("err", !!isErr);
+  t.querySelector(".check").textContent = isErr ? "!" : "✓";
+  $("toastTitle").textContent = title; $("toastDetail").textContent = detail;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
+}
+
+// ============================================================
+//  Editor operations
+// ============================================================
+function move(i, dir) {
+  const j = i + dir; if (j < 0 || j >= state.cells.length) return;
+  const c = state.cells; [c[i], c[j]] = [c[j], c[i]]; renderFields(); renderPreview(); renderSpec();
+}
+function reorder(from, to) {
+  if (from === to || from === to - 1) return;
+  const c = state.cells; const [moved] = c.splice(from, 1); if (from < to) to--; c.splice(to, 0, moved);
+  renderFields(); renderPreview(); renderSpec();
+}
+function mergeDown(i) {
+  if (i >= state.cells.length - 1) return;
+  const c = state.cells; c[i].members.push.apply(c[i].members, c[i + 1].members); c.splice(i + 1, 1);
+  renderFields(); renderPreview(); renderSpec();
+}
+function unmerge(i) {
+  const cell = state.cells[i]; if (cell.members.length < 2) return;
+  const extras = cell.members.splice(1);
+  const newCells = extras.map(m => ({ id: nextId(), members: [m], role: cell.role, style: "stacked" }));
+  state.cells.splice.apply(state.cells, [i + 1, 0].concat(newCells));
+  renderFields(); renderPreview(); renderSpec();
+}
+
+// ============================================================
+//  Event wiring
+// ============================================================
+let armed = false, dragFrom = null;
+function wireFieldEvents() {
+  document.querySelectorAll("#fields .cell").forEach(el => {
+    const i = +el.dataset.i;
+    el.querySelector(".grip").addEventListener("mousedown", () => { armed = true; });
+    el.querySelector(".grip").addEventListener("mouseup", () => { armed = false; });
+    el.addEventListener("dragstart", e => {
+      if (!armed) { e.preventDefault(); return; }
+      dragFrom = i; e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging");
+    });
+    el.addEventListener("dragend", () => {
+      armed = false; el.classList.remove("dragging");
+      document.querySelectorAll("#fields .cell").forEach(c => c.classList.remove("drop-before", "drop-after"));
+    });
+    el.addEventListener("dragover", e => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+      el.classList.toggle("drop-after", after); el.classList.toggle("drop-before", !after);
+    });
+    el.addEventListener("dragleave", () => el.classList.remove("drop-before", "drop-after"));
+    el.addEventListener("drop", e => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect(); const to = i + (e.clientY > r.top + r.height / 2 ? 1 : 0);
+      if (dragFrom != null) reorder(dragFrom, to); dragFrom = null;
+    });
+    el.querySelectorAll("[data-act]").forEach(btn => {
+      const act = btn.dataset.act;
+      if (act === "role") {
+        btn.addEventListener("change", e => { state.cells[i].role = e.target.value; renderFields(); renderPreview(); renderSpec(); });
+      } else {
+        btn.addEventListener("click", () => {
+          if (act === "up") move(i, -1);
+          else if (act === "down") move(i, 1);
+          else if (act === "merge") mergeDown(i);
+          else if (act === "unmerge") unmerge(i);
+        });
+      }
+    });
+    el.querySelectorAll("[data-style]").forEach(b => {
+      b.addEventListener("click", () => { state.cells[i].style = b.dataset.style; renderFields(); renderPreview(); renderSpec(); });
+    });
+  });
+}
+
+$("presetRow").addEventListener("click", e => {
+  const btn = e.target.closest(".preset"); if (!btn) return;
+  loadProject(btn.dataset.project, btn.dataset.table);
+});
+$("modes").addEventListener("click", e => {
+  const btn = e.target.closest("button"); if (!btn) return;
+  state.mode = btn.dataset.mode; renderPreview(); renderSpec();
+});
+$("reinferBtn").addEventListener("click", reinfer);
+$("resetBtn").addEventListener("click", reset);
+$("publishBtn").addEventListener("click", publish);
+$("copyBtn").addEventListener("click", () => {
+  navigator.clipboard.writeText(specText()).then(() => {
+    const b = $("copyBtn"); b.classList.add("done");
+    b.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Copied';
+    setTimeout(() => { b.classList.remove("done"); b.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy'; }, 1500);
+  });
+});
+
+// boot
+loadProject("salon", "bookings");
+</script>
+</body>
+</html>
