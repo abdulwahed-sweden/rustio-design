@@ -68,6 +68,11 @@ fn build_and_check_resolve_output_against_spec_root() {
     assert!(p.0.join("generated/wire.env").exists());
     assert!(p.0.join("generated/.manifest").exists());
     assert!(p.0.join("generated/views/bookings.view.json").exists());
+    // the list.html override lands at the default _out under generated/
+    assert!(p
+        .0
+        .join("generated/templates/admin/bookings/list.html")
+        .exists());
 
     let check = p.run(&["check", "--spec", &p.spec()]);
     assert!(

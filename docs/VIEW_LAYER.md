@@ -126,6 +126,20 @@ export RUSTIO_TEMPLATE_DIR="$PWD/generated/templates"
 cargo run            # the reshaped list is now live
 ```
 
+Or, if your app already serves a hand-written `templates/` dir (and points
+`RUSTIO_TEMPLATE_DIR` at it — like `examples/shop` does for its `_sidebar.html`),
+set `_out` so `build` writes the override straight there, exactly like
+`[navigation]._out`:
+
+```toml
+[views.products]
+model     = "Product"
+mode      = "list"
+primary   = "name"
+secondary = "price + in_stock (badge)"
+_out      = "templates/admin/products/list.html"   # served dir
+```
+
 The override reproduces the framework's list chrome (search, filters, sort, bulk
 actions, pagination) **verbatim** and drives only the columns from your view-spec
 — so nothing else changes. It mirrors a specific framework `list.html`; if you

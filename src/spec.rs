@@ -72,7 +72,10 @@ pub struct TableView {
     pub model: Option<String>,
     /// Optional source file holding the model struct (defaults to `src/main.rs`).
     pub source: Option<String>,
-    /// Output path for the generated `*.view.json`, relative to the spec root.
+    /// Output path for the generated `list.html` override (`_out`), relative to
+    /// the spec root. Like `[navigation]._out`, point it at the directory the
+    /// framework serves via `RUSTIO_TEMPLATE_DIR` (e.g.
+    /// `templates/admin/<table>/list.html`). Defaults under `generated/`.
     pub out: String,
     /// Unrecognised keys in the section (surfaced as warnings by `views::lint`).
     pub unknown_keys: Vec<String>,
@@ -214,7 +217,7 @@ impl Spec {
             let mut cells = Vec::new();
             let mut model = None;
             let mut source = None;
-            let mut out_path = format!("generated/views/{table}.view.json");
+            let mut out_path = format!("generated/templates/admin/{table}/list.html");
             let mut unknown_keys = Vec::new();
             for (k, v) in &section.entries {
                 let Some(val) = v.as_str() else { continue };
