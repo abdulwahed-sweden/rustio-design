@@ -1,0 +1,12 @@
+[project]
+name = "Salon Admin"
+out_dir = "generated"
+
+[views.bookings]
+model     = "Booking"
+source    = "src/main.rs"
+mode      = "list"
+primary   = "booked_at"
+secondary = "customer + phone (inline), status (badge), assigned_to"
+detail    = "address, notes"
+hidden    = "id, internal_uuid"

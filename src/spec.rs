@@ -45,6 +45,39 @@ pub struct Navigation {
     pub out: String,
 }
 
+/// One cell of a record view: one or more composed members under a lead field,
+/// carrying an importance role and a compose style.
+pub struct ViewCell {
+    /// Member field names; the first is the lead. More than one ⇒ composed.
+    pub members: Vec<String>,
+    /// Importance role: `primary` | `secondary` | `detail` | `hidden`.
+    pub role: String,
+    /// Compose style: `stacked` | `inline` | `badge`.
+    pub style: String,
+}
+
+/// The record-layout for one table, parsed from `[views.<table>]` (the WHAT
+/// layer's record-view projection). Roles are authored as comma-separated cell
+/// lists; a cell may compose members with `+` and hint a style in parens, e.g.
+/// `secondary = "customer + phone (inline), status (badge)"`.
+pub struct TableView {
+    /// Table name (the suffix after `views.` in the section header).
+    pub table: String,
+    /// Default view mode: `list` | `cards` | `gallery`.
+    pub mode: String,
+    /// Cells in declared order, each tagged with its role.
+    pub cells: Vec<ViewCell>,
+    /// Optional model type name, used to resolve the table's columns for
+    /// schema-aware validation (best-effort; see `schema::model_columns`).
+    pub model: Option<String>,
+    /// Optional source file holding the model struct (defaults to `src/main.rs`).
+    pub source: Option<String>,
+    /// Output path for the generated `*.view.json`, relative to the spec root.
+    pub out: String,
+    /// Unrecognised keys in the section (surfaced as warnings by `views::lint`).
+    pub unknown_keys: Vec<String>,
+}
+
 /// One token override pulled from the spec, before resolution.
 pub struct RawToken {
     /// The originating section (`colors` / `spacing` / `radius` / `typography`).
@@ -161,6 +194,63 @@ impl Spec {
         })
     }
 
+    /// The record-view layer: every `[views.<table>]` section with at least one
+    /// placed field, in document order.
+    ///
+    /// Section keys: `mode`, the four role lists (`primary` / `secondary` /
+    /// `detail` / `hidden`), and reserved `model` / `source` / `_out`. Unknown
+    /// keys are retained on `TableView::unknown_keys` for `views::lint` to flag.
+    pub fn views(&self) -> Vec<TableView> {
+        const ROLES: [&str; 4] = ["primary", "secondary", "detail", "hidden"];
+        let mut out = Vec::new();
+        for section in &self.doc.sections {
+            let Some(table) = section.name.strip_prefix("views.") else {
+                continue;
+            };
+            if table.is_empty() {
+                continue;
+            }
+            let mut mode = "list".to_string();
+            let mut cells = Vec::new();
+            let mut model = None;
+            let mut source = None;
+            let mut out_path = format!("generated/views/{table}.view.json");
+            let mut unknown_keys = Vec::new();
+            for (k, v) in &section.entries {
+                let Some(val) = v.as_str() else { continue };
+                match k.as_str() {
+                    "mode" => mode = val.trim().to_string(),
+                    "model" => model = Some(val.trim().to_string()),
+                    "source" => source = Some(val.trim().to_string()),
+                    "_out" => out_path = val.trim().to_string(),
+                    role if ROLES.contains(&role) => {
+                        for (members, style) in parse_cells(val) {
+                            cells.push(ViewCell {
+                                members,
+                                role: role.to_string(),
+                                style,
+                            });
+                        }
+                    }
+                    other => unknown_keys.push(other.to_string()),
+                }
+            }
+            if cells.is_empty() {
+                continue;
+            }
+            out.push(TableView {
+                table: table.to_string(),
+                mode,
+                cells,
+                model,
+                source,
+                out: out_path,
+                unknown_keys,
+            });
+        }
+        out
+    }
+
     /// Raw CSS from the `[custom_css].rules` escape hatch, if any.
     pub fn custom_css(&self) -> Option<&str> {
         self.doc
@@ -177,6 +267,45 @@ fn split_items(s: &str) -> Vec<String> {
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect()
+}
+
+/// Parse a role's value into `(members, style)` cells.
+///
+/// `"customer + phone (inline), status (badge), notes"` ⇒
+/// `[(["customer","phone"], "inline"), (["status"], "badge"), (["notes"], "stacked")]`.
+/// An unrecognised style falls back to `stacked`.
+fn parse_cells(value: &str) -> Vec<(Vec<String>, String)> {
+    value
+        .split(',')
+        .filter_map(|raw| {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                return None;
+            }
+            let (body, style) = match raw.rfind('(') {
+                Some(i) if raw.ends_with(')') => (raw[..i].trim(), &raw[i + 1..raw.len() - 1]),
+                _ => (raw, "stacked"),
+            };
+            let members: Vec<String> = body
+                .split('+')
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect();
+            if members.is_empty() {
+                None
+            } else {
+                Some((members, normalize_style(style.trim())))
+            }
+        })
+        .collect()
+}
+
+/// Clamp a style hint to the supported set, defaulting to `stacked`.
+fn normalize_style(style: &str) -> String {
+    match style {
+        "inline" | "badge" | "stacked" => style.to_string(),
+        _ => "stacked".to_string(),
+    }
 }
 
 #[cfg(test)]

@@ -116,6 +116,20 @@ decision: reason in `DESIGN_ARCHITECTURE.md` / `DESIGN_REASONING.md` (`/design-r
 before changing it. Coverage is validated best-effort against the project's
 `src/main.rs` models. Tracking issue: rustio-design#1.
 
+## View layer (`[views.<table>]`)
+
+The second WHAT-layer slice that compiles to output (after navigation). Per-table
+record layout: `mode` + role lists `primary` / `secondary` / `detail` / `hidden`
+(comma-separated cells; `+` composes fields, `(style)` hints stacked/inline/badge;
+reserved `model` / `source` / `_out`). `build` validates field names against the
+table's columns (best-effort, set `model`) and freezes each table to
+`generated/views/<table>.view.json` — the frozen file a runtime renderer reads
+(not a template; the bridge never guesses at rustio-admin's markup). Author it
+with the Adaptive View Editor; extract columns from your models with
+`rustio-design schema --all`. It is a WHAT-layer decision: reason in
+`DESIGN_ARCHITECTURE.md` / `DESIGN_REASONING.md` first. Full guide:
+`docs/VIEW_LAYER.md`. Design rationale: `DESIGN_REASONING.md` R-001.
+
 ## How generation maps to the framework
 
 This tool targets two recompile-free seams: **`RUSTIO_TOKENS_CSS`** (tokens) and

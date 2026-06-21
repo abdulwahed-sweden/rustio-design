@@ -23,11 +23,13 @@ mod color;
 mod context;
 mod manifest;
 mod nav;
+mod schema;
 mod sha256;
 mod spec;
 mod tokens;
 mod toml_lite;
 mod validate;
+mod views;
 
 use manifest::Manifest;
 use sha256::sha256_hex;
@@ -46,6 +48,7 @@ fn main() -> ExitCode {
         "init" => cmd_init(&spec_path),
         "build" => cmd_build(&spec_path),
         "check" => cmd_check(&spec_path),
+        "schema" => cmd_schema(&args, &spec_path),
         "context" => cmd_context(&spec_path),
         "wire" => cmd_wire(&spec_path),
         "explain" => {
@@ -203,30 +206,55 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
         }
     }
 
+    // --- view layer (WHAT → output); refuse on structural errors ---
+    let views = spec.views();
+    for view in &views {
+        let columns = resolve_view_columns(&root, view);
+        let lint = views::lint(view, columns.as_deref());
+        for w in &lint.warnings {
+            eprintln!("  warning: {w}");
+        }
+        if !lint.errors.is_empty() {
+            for e in &lint.errors {
+                eprintln!("  error: {e}");
+            }
+            return Err(format!(
+                "{} view error(s) — nothing was generated",
+                lint.errors.len()
+            ));
+        }
+    }
+
     let ramp = derive_brand_ramp(&spec);
     let css = tokens::build_tokens_css(&spec, ramp.as_deref());
 
+    // All artifacts resolve against the spec root, so `build`/`check` agree no
+    // matter the working directory. Manifest *keys* stay root-relative (so the
+    // drift check's `root.join(key)` round-trips); filesystem writes use the
+    // absolute path. With the spec at the repo root, `root` is `.` and this is a
+    // no-op — only `--spec <subdir>/…` runs change.
     let out_dir = spec.out_dir().to_string();
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("could not create {out_dir}/: {e}"))?;
+    let out_abs = root.join(&out_dir);
+    std::fs::create_dir_all(&out_abs)
+        .map_err(|e| format!("could not create {}: {e}", out_abs.display()))?;
 
-    // Manifest paths are relative to the spec root, so generated artifacts may
-    // live outside out_dir (e.g. a template override in the project's templates).
     let mut m = Manifest::new();
     m.set(spec_path, &sha256_hex(src.as_bytes()));
 
     let tokens_path = format!("{out_dir}/tokens.css");
-    write_file(&tokens_path, &css)?;
+    write_file(&out_abs.join("tokens.css").to_string_lossy(), &css)?;
     m.set(&tokens_path, &sha256_hex(css.as_bytes()));
 
-    let wire = wire_env_text(&tokens_path)?;
-    let wire_path = format!("{out_dir}/wire.env");
-    write_file(&wire_path, &wire)?;
-    m.set(&wire_path, &sha256_hex(wire.as_bytes()));
+    let wire = wire_env_text(&out_abs.join("tokens.css").to_string_lossy())?;
+    write_file(&out_abs.join("wire.env").to_string_lossy(), &wire)?;
+    m.set(&format!("{out_dir}/wire.env"), &sha256_hex(wire.as_bytes()));
 
     let readme = generated_readme(spec.project_name());
-    let readme_path = format!("{out_dir}/README.md");
-    write_file(&readme_path, &readme)?;
-    m.set(&readme_path, &sha256_hex(readme.as_bytes()));
+    write_file(&out_abs.join("README.md").to_string_lossy(), &readme)?;
+    m.set(
+        &format!("{out_dir}/README.md"),
+        &sha256_hex(readme.as_bytes()),
+    );
 
     let mut nav_msg = None;
     if let Some(nav) = &navigation {
@@ -242,7 +270,22 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
         nav_msg = Some(nav.out.clone());
     }
 
-    write_file(&format!("{out_dir}/.manifest"), &m.to_text())?;
+    // Freeze each table view to a deterministic *.view.json the renderer reads.
+    let mut view_count = 0usize;
+    for view in &views {
+        let json = views::build_view_json(spec.project_name(), view);
+        let view_path = root.join(&view.out);
+        if let Some(parent) = view_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&view_path, &json)
+            .map_err(|e| format!("could not write {}: {e}", view_path.display()))?;
+        m.set(&view.out, &sha256_hex(json.as_bytes()));
+        view_count += 1;
+    }
+
+    write_file(&out_abs.join(".manifest").to_string_lossy(), &m.to_text())?;
 
     println!("✓ built {tokens_path}");
     if ramp.is_some() {
@@ -250,6 +293,11 @@ fn cmd_build(spec_path: &str) -> Result<(), String> {
     }
     if let Some(out) = nav_msg {
         println!("  navigation: {out}  (serve via RUSTIO_TEMPLATE_DIR)");
+    }
+    if view_count > 0 {
+        println!(
+            "  views:      {view_count} table(s) → *.view.json  (read at runtime by the renderer)"
+        );
     }
     println!("  serve it:   rustio-design wire   (or see {out_dir}/wire.env)");
     Ok(())
@@ -296,10 +344,24 @@ fn cmd_check(spec_path: &str) -> Result<(), String> {
         Vec::new()
     };
 
-    let out_dir = spec.out_dir().to_string();
-    let manifest_path = format!("{out_dir}/.manifest");
-    let mtext = std::fs::read_to_string(&manifest_path)
-        .map_err(|_| format!("no manifest at {manifest_path} — run `rustio-design build` first"))?;
+    // View layer lint (non-blocking warnings; structural errors counted).
+    let mut view_errors: Vec<String> = Vec::new();
+    for view in spec.views() {
+        let columns = resolve_view_columns(&root, &view);
+        let lint = views::lint(&view, columns.as_deref());
+        for w in &lint.warnings {
+            eprintln!("  warning: {w}");
+        }
+        view_errors.extend(lint.errors);
+    }
+
+    let manifest_path = root.join(spec.out_dir()).join(".manifest");
+    let mtext = std::fs::read_to_string(&manifest_path).map_err(|_| {
+        format!(
+            "no manifest at {} — run `rustio-design build` first",
+            manifest_path.display()
+        )
+    })?;
     let m = Manifest::parse(&mtext);
 
     let mut problems = 0usize;
@@ -309,6 +371,10 @@ fn cmd_check(spec_path: &str) -> Result<(), String> {
         problems += 1;
     }
     for e in &nav_errors {
+        eprintln!("  error:   {e}");
+        problems += 1;
+    }
+    for e in &view_errors {
         eprintln!("  error:   {e}");
         problems += 1;
     }
@@ -358,9 +424,9 @@ fn cmd_check(spec_path: &str) -> Result<(), String> {
 
 fn cmd_wire(spec_path: &str) -> Result<(), String> {
     let (_src, spec) = load_spec(spec_path)?;
-    let path = format!("{}/wire.env", spec.out_dir());
+    let path = spec_root(spec_path).join(spec.out_dir()).join("wire.env");
     let text = std::fs::read_to_string(&path)
-        .map_err(|_| format!("no {path} — run `rustio-design build` first"))?;
+        .map_err(|_| format!("no {} — run `rustio-design build` first", path.display()))?;
     print!("{text}");
     Ok(())
 }
@@ -384,6 +450,135 @@ fn spec_root(spec_path: &str) -> std::path::PathBuf {
 fn read_project_models(root: &std::path::Path) -> Option<Vec<String>> {
     let src = std::fs::read_to_string(root.join("src/main.rs")).ok()?;
     Some(nav::registered_models(&src))
+}
+
+/// Best-effort resolution of a table view's columns from its model struct, for
+/// schema-aware validation. `None` when no `model` is declared or it can't be
+/// parsed (in which case `views::lint` warns that coverage is unverified).
+fn resolve_view_columns(root: &std::path::Path, view: &spec::TableView) -> Option<Vec<String>> {
+    let model = view.model.as_ref()?;
+    let source = view
+        .source
+        .clone()
+        .unwrap_or_else(|| "src/main.rs".to_string());
+    let src = std::fs::read_to_string(root.join(&source)).ok()?;
+    let cols = schema::model_columns(&src, model);
+    if cols.is_empty() {
+        None
+    } else {
+        Some(cols.into_iter().map(|c| c.name).collect())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// schema  (extract a table's columns from its model — feeds the view editor)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Extract model struct fields into view-editor schema files.
+///
+/// One model:
+///   `rustio-design schema --model Booking [--source src/models.rs]
+///    [--table bookings] [--out path.json]`
+///
+/// Every registered model at once (zero per-table repetition):
+///   `rustio-design schema --all [--source src/main.rs] --out-dir <dir>`
+///
+/// Best-effort: parses structs from source rather than compiling, so it stays
+/// zero-dependency.
+fn cmd_schema(args: &[String], spec_path: &str) -> Result<(), String> {
+    let root = spec_root(spec_path);
+    let source = flag_value(args, "--source").unwrap_or_else(|| "src/main.rs".to_string());
+    let project = load_spec(spec_path)
+        .map(|(_, s)| s.project_name().to_string())
+        .unwrap_or_else(|_| "app".to_string());
+    let src = std::fs::read_to_string(root.join(&source))
+        .map_err(|_| format!("cannot read {source} — pass --source <path to the model(s)>"))?;
+
+    if args.iter().any(|a| a == "--all") {
+        return cmd_schema_all(args, &project, &source, &src);
+    }
+
+    let model = flag_value(args, "--model")
+        .ok_or("`schema` needs --model <Type> (e.g. --model Booking), or --all for every model")?;
+    let table = flag_value(args, "--table").unwrap_or_else(|| default_table(&model));
+    let cols = schema::model_columns(&src, &model);
+    if cols.is_empty() {
+        return Err(format!(
+            "no fields found for `struct {model}` in {source} — check --model / --source"
+        ));
+    }
+
+    let json = schema::columns_json(&project, &table, &cols);
+    if let Some(out) = flag_value(args, "--out") {
+        write_file(&out, &json)?;
+        println!("✓ wrote {out}  ({} columns)", cols.len());
+        println!("  drop it into the editor's data/schemas/{project}/{table}.json");
+    } else {
+        print!("{json}");
+    }
+    Ok(())
+}
+
+/// Extract a schema for every `.model::<T>()` registered in the source — one
+/// command for the whole app. Writes `<out-dir>/<table>.json` when `--out-dir`
+/// is given, otherwise prints each schema. Structs not found in `--source` are
+/// reported so they can be pointed at with a single-model run.
+fn cmd_schema_all(args: &[String], project: &str, source: &str, src: &str) -> Result<(), String> {
+    let models = nav::registered_models(src);
+    if models.is_empty() {
+        return Err(format!(
+            "no `.model::<…>()` registrations found in {source} — pass --source <path>"
+        ));
+    }
+    let out_dir = flag_value(args, "--out-dir");
+    if let Some(dir) = &out_dir {
+        std::fs::create_dir_all(dir).map_err(|e| format!("could not create {dir}: {e}"))?;
+    }
+
+    let mut written = 0usize;
+    let mut missing: Vec<String> = Vec::new();
+    for model in &models {
+        let cols = schema::model_columns(src, model);
+        if cols.is_empty() {
+            missing.push(model.clone());
+            continue;
+        }
+        let table = default_table(model);
+        let json = schema::columns_json(project, &table, &cols);
+        match &out_dir {
+            Some(dir) => {
+                let path = format!("{dir}/{table}.json");
+                write_file(&path, &json)?;
+                println!("✓ {table:<16} {model} → {path}  ({} columns)", cols.len());
+                written += 1;
+            }
+            None => {
+                println!("// ── {table} ({model}) ──");
+                print!("{json}");
+            }
+        }
+    }
+
+    if !missing.is_empty() {
+        println!();
+        println!(
+            "  note: {} model(s) not defined in {source}: {}",
+            missing.len(),
+            missing.join(", ")
+        );
+        println!("        run `schema --model <Name> --source <file>` for those.");
+    }
+    if out_dir.is_some() {
+        println!();
+        println!("  {written} schema(s) ready — copy into the editor's data/schemas/{project}/");
+    }
+    Ok(())
+}
+
+/// Default table identifier for a model: lowercase + a naive plural `s`.
+/// Override with `--table`; it just needs to match the `[views.<table>]` key.
+fn default_table(model: &str) -> String {
+    format!("{}s", model.to_lowercase())
 }
 
 /// Read and parse the spec file into `(raw_source, Spec)`.
@@ -506,6 +701,7 @@ fn print_help() {
          \x20 init      Scaffold the spec + design-memory artifacts (DESIGN_*.md)\n\
          \x20 build     Validate the spec and generate tokens.css + manifest\n\
          \x20 check     Validate + detect drift/staleness (read-only, CI-friendly)\n\
+         \x20 schema    Extract model columns into editor schemas (--model | --all)\n\
          \x20 context   Assemble the design stack (WHY→WHAT→HOW) into one stream\n\
          \x20 wire      Print the env export that serves the generated output\n\
          \x20 explain   Print the workflow and the iron rules\n\
@@ -624,6 +820,22 @@ lg      = "12px"
 # Sales     = "Orders, Payments"
 # _hidden   = "Order items, Cart items"
 # _out      = "generated/templates/admin/_sidebar.html"
+
+# ── Views (WHAT → output) ────────────────────────────────────────────
+# Per-table record layout. Roles are comma-separated cells; compose with
+# `+` and hint a style in parens: (stacked) | (inline) | (badge). `build`
+# freezes each table to generated/views/<table>.view.json — the frozen
+# file the runtime renderer reads. Set `model` (+ optional `source`) to
+# validate field names against the table's real columns. Author this with
+# the Adaptive View Editor; reason in DESIGN_ARCHITECTURE.md first.
+# [views.bookings]
+# model     = "Booking"
+# source    = "src/main.rs"
+# mode      = "list"
+# primary   = "booked_at"
+# secondary = "customer + phone (inline), status (badge), assigned_to"
+# detail    = "address, notes"
+# hidden    = "id, internal_uuid"
 
 [custom_css]
 # Escape hatch for the rare rule with no token. Validated: no @import, no

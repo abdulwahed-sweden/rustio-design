@@ -6,3 +6,7 @@
 # against the manifest in CI to catch drift and staleness. Do NOT ignore it.
 # (Only transient artifacts are ignored.)
 *.tmp
+
+# Example apps' generated output is environment-specific (absolute paths in
+# wire.env); the example sources are committed, the build output is not.
+examples/*/generated/
