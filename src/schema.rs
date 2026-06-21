@@ -58,7 +58,10 @@ pub fn model_columns(src: &str, model: &str) -> Vec<Column> {
             _ => {}
         }
     }
-    let body = &code[body_start..end];
+    // Strip `#[…]` attributes first — they can carry commas (e.g.
+    // `#[rustio(choices = ["a", "b"])]`) that would otherwise split mid-attribute
+    // and swallow the field that follows.
+    let body = strip_attributes(&code[body_start..end]);
 
     let mut out = Vec::new();
     for raw in body.split(',') {
@@ -84,6 +87,35 @@ pub fn model_columns(src: &str, model: &str) -> Vec<Column> {
             name: name.to_string(),
             ty: map_rust_type(ty).to_string(),
         });
+    }
+    out
+}
+
+/// Remove `#[…]` attribute spans from a struct body, with balanced-bracket
+/// tracking so commas inside an attribute (`choices = ["a", "b"]`) don't leak
+/// into field parsing.
+fn strip_attributes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '#' && chars.peek() == Some(&'[') {
+            chars.next(); // consume the opening '['
+            let mut depth = 1usize;
+            for d in chars.by_ref() {
+                match d {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            out.push(c);
+        }
     }
     out
 }
@@ -220,6 +252,20 @@ mod tests {
     #[test]
     fn unknown_struct_yields_nothing() {
         assert!(model_columns(SRC, "Missing").is_empty());
+    }
+
+    #[test]
+    fn handles_attribute_with_inner_commas() {
+        // A `choices` attribute carries commas that must not split the field.
+        let src = "pub struct Order {\n\
+                   pub id: i64,\n\
+                   pub total: Decimal,\n\
+                   #[rustio(choices = [\"pending\", \"paid\", \"shipped\"])]\n\
+                   pub status: String,\n\
+                   }";
+        let cols = model_columns(src, "Order");
+        let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["id", "total", "status"]);
     }
 
     #[test]
